@@ -2,14 +2,10 @@ import { useEffect, useRef } from 'react';
 
 import { installMarks } from '@/marks';
 import { installAnnotationsUplink } from '@/marks/ws-uplink';
-import { Viewer, type RenderMode } from '@/scene/viewer';
+import { Viewer, type RenderMode, type ViewerTheme } from '@/scene/viewer';
+import { viewerStore, type MarkMode } from '@/store';
 import { connectMeshFeed, type MeshFeedHandle } from '@/transport/ws-client';
 import type { PreviewPayload } from '@/types';
-import { viewerStore } from '@/store';
-
-// Re-export for back-compat with any external imports; the runtime
-// types now live in @/store (VIE-6).
-export type { MarksRuntime, ViewerApi } from '@/store';
 
 export function ViewerCanvas() {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -33,6 +29,7 @@ export function ViewerCanvas() {
       overlayHost: overlay,
       getMesh: () => viewer.getMesh(),
       requestRender: () => viewer.requestRender(),
+      onModeChange: mode => viewerStore.setMarkMode(mode),
     });
     const removeMarksFrameHook = viewer.addPerFrameHook(() => marks.frame());
 
@@ -61,16 +58,48 @@ export function ViewerCanvas() {
       onStatusChange: status => viewerStore.setStatus(status),
     });
 
+    // Dev-only offline preview. `npm run dev:viewer` runs Vite with
+    // --mode demo, which sets import.meta.env.MODE to 'demo'. In every
+    // other mode (development / production) this branch constant-folds
+    // to false, so the demo module is tree-shaken out of real builds.
+    // If no live mesh arrives shortly after mount, inject the built-in
+    // bracket so the whole UI stays explorable without an MCP server.
+    let demoTimer: number | undefined;
+    if (import.meta.env.MODE === 'demo') {
+      demoTimer = window.setTimeout(() => {
+        if (lastPayload) {
+          return;
+        }
+        void import('@/demo-payload').then(({ buildDemoPayload }) => {
+          if (lastPayload) {
+            return;
+          }
+          const demo = buildDemoPayload();
+          lastPayload = demo;
+          viewerStore.setStatus('connected');
+          viewerStore.setPayload(demo);
+          viewer.setMesh(demo);
+          marks.setPayload(demo);
+          marks.setModelVersion('demo');
+          viewerStore.setModelVersion('demo');
+        });
+      }, 600);
+    }
+
     viewerStore.setMarksRuntime({ store: marks.store, flyouts: marks.flyouts });
     viewerStore.setViewerApi({
       setRenderMode(mode: RenderMode): void {
         viewerStore.setRenderMode(mode);
         viewer.setRenderMode(mode);
       },
-      // VIE-4: dynamic-import the exporter modules. They pull in
-      // @jscadui/3mf-export, fflate, and three's STLExporter — together
-      // ~85 KB minified. The first export click incurs a brief module
-      // load; subsequent clicks reuse the now-resident chunk.
+      setMarkMode(mode: MarkMode): void {
+        // MarkTool notifies onModeChange, which updates the store.
+        marks.setMode(mode);
+      },
+      setTheme(theme: ViewerTheme): void {
+        viewer.setTheme(theme);
+      },
+      // Exporters are dynamically imported on first use (~85 KB min).
       async export3mf(): Promise<void> {
         if (!lastPayload) {
           return;
@@ -89,6 +118,9 @@ export function ViewerCanvas() {
     });
 
     return () => {
+      if (demoTimer !== undefined) {
+        window.clearTimeout(demoTimer);
+      }
       viewerStore.setViewerApi(null);
       viewerStore.setMarksRuntime(null);
       feedHandle?.close();
@@ -97,6 +129,7 @@ export function ViewerCanvas() {
       marks.dispose();
       viewer.dispose();
       viewerStore.setPayload(null);
+      viewerStore.setMarkMode('orbit');
       viewerStore.setStatus('disconnected');
     };
   }, []);
@@ -104,11 +137,9 @@ export function ViewerCanvas() {
   return (
     <>
       {/*
-        VIE-8 a11y: the canvas is graphical content; assistive tech can't
-        read its pixels. role="img" plus a descriptive label gives screen
-        readers something to announce. The label is intentionally generic
-        because the rendered content changes per-mesh; ControlPanel's
-        ModelInfo block carries the structured metadata.
+        The canvas is graphical content; assistive tech can't read its
+        pixels. role="img" plus a descriptive label gives screen readers
+        something to announce.
       */}
       <canvas id="view" ref={canvasRef} role="img" aria-label="3D model preview" />
       <div id="marks-overlay" ref={overlayRef} />

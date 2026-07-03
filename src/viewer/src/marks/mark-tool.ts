@@ -7,24 +7,46 @@ import { eventToNdc, pickPoint, pickRegion } from './picker.js';
 import type { FlyoutLayer } from './flyout.js';
 
 /**
- * Wires Ctrl+click and Ctrl+drag input on the canvas to the annotation
- * store. Also draws the rubber-band rectangle while a region drag is in
- * progress, and disables OrbitControls during a Ctrl-modified gesture
- * so the camera doesn't fight the user.
+ * Interaction mode for the mark tool:
+ *   - 'orbit'  — default. Camera drag on plain left click; annotations
+ *                are still reachable through the legacy Ctrl+click /
+ *                Ctrl+drag power-user gestures.
+ *   - 'point'  — explicit point-annotation tool: plain left click on
+ *                the model places a point mark. Drags are ignored (no
+ *                accidental marks).
+ *   - 'region' — explicit region tool: plain left drag draws the
+ *                rubber band and creates a region mark on release.
  *
- * State machine:
+ * The tool stays armed after each completed mark so users can place
+ * several in a row; Escape (or clicking the orbit tool in the UI)
+ * returns to 'orbit'.
  *
- *   idle ──Ctrl+mousedown─► armed
- *   armed ──move>threshold─► dragging
- *   armed ──mouseup────────► point pick (single Ctrl+click)
- *   dragging ──mouseup─────► region pick
+ * Gesture state machine (unchanged from upstream):
+ *
+ *   idle ──mousedown (mode or Ctrl)─► armed
+ *   armed ──move>threshold──────────► dragging (region-capable gestures)
+ *   armed ──mouseup─────────────────► point pick
+ *   dragging ──mouseup──────────────► region pick
  *
  * If the gesture begins inside a flyout, we let it bubble (so users can
  * type / click delete) and skip the state machine entirely.
  */
+export type MarkToolMode = 'orbit' | 'point' | 'region';
+
+/** How each armed gesture may resolve. */
+type GestureKind =
+  /** Legacy Ctrl gesture: click ⇒ point, drag ⇒ region. */
+  | 'auto'
+  /** Point tool: click ⇒ point, drag ⇒ cancelled. */
+  | 'point'
+  /** Region tool: drag ⇒ region, bare click ⇒ nothing. */
+  | 'region';
+
 export class MarkTool {
   private readonly rubberBand: HTMLDivElement;
   private state: 'idle' | 'armed' | 'dragging' = 'idle';
+  private mode: MarkToolMode = 'orbit';
+  private gesture: GestureKind = 'auto';
   private startScreen = { x: 0, y: 0 };
   private startNdc = new THREE.Vector2();
   private endNdc = new THREE.Vector2();
@@ -39,6 +61,8 @@ export class MarkTool {
     private readonly flyouts: FlyoutLayer,
     private readonly getMesh: () => THREE.Mesh | null,
     private readonly getResolver: () => FeatureResolver | null,
+    /** Notified whenever the mode changes (from setMode or Escape). */
+    private readonly onModeChange?: (mode: MarkToolMode) => void,
   ) {
     this.rubberBand = document.createElement('div');
     this.rubberBand.className = 'marks-rubber-band';
@@ -49,17 +73,20 @@ export class MarkTool {
     const onMove = (ev: MouseEvent) => this.handleMove(ev);
     const onUp = (ev: MouseEvent) => this.handleUp(ev);
     const onDocClick = (ev: MouseEvent) => this.handleDocClick(ev);
+    const onKeyDown = (ev: KeyboardEvent) => this.handleKeyDown(ev);
 
     canvas.addEventListener('mousedown', onDown);
     window.addEventListener('mousemove', onMove);
     window.addEventListener('mouseup', onUp);
     window.addEventListener('click', onDocClick, true);
+    window.addEventListener('keydown', onKeyDown);
 
     this.listeners = [
       () => canvas.removeEventListener('mousedown', onDown),
       () => window.removeEventListener('mousemove', onMove),
       () => window.removeEventListener('mouseup', onUp),
       () => window.removeEventListener('click', onDocClick, true),
+      () => window.removeEventListener('keydown', onKeyDown),
     ];
   }
 
@@ -68,19 +95,74 @@ export class MarkTool {
       off();
     }
     this.rubberBand.remove();
+    delete document.body.dataset.markMode;
   }
 
-  private isMarkGesture(ev: MouseEvent): boolean {
-    return ev.button === 0 && (ev.ctrlKey || ev.metaKey);
+  getMode(): MarkToolMode {
+    return this.mode;
+  }
+
+  /**
+   * Switch interaction mode. Cancels any in-flight gesture, updates the
+   * cursor affordance, and notifies the UI store. Idempotent.
+   */
+  setMode(mode: MarkToolMode): void {
+    if (this.mode === mode) {
+      return;
+    }
+    this.mode = mode;
+    this.cancelGesture();
+    // Drive the cursor from a <body> attribute so styles.css can give
+    // point (crosshair) and region (cell) distinct affordances; orbit
+    // clears it and falls back to the default canvas cursor.
+    if (mode === 'orbit') {
+      delete document.body.dataset.markMode;
+    } else {
+      document.body.dataset.markMode = mode;
+    }
+    this.onModeChange?.(mode);
+  }
+
+  private cancelGesture(): void {
+    if (this.state === 'idle') {
+      return;
+    }
+    this.state = 'idle';
+    this.rubberBand.style.display = 'none';
+    this.controls.enabled = true;
+  }
+
+  private handleKeyDown(ev: KeyboardEvent): void {
+    if (ev.key !== 'Escape') {
+      return;
+    }
+    // Don't steal Escape from an open flyout textarea; the flyout
+    // handles its own dismissal first, then a second Escape exits the
+    // tool mode.
+    if (this.flyouts.ownsTarget(ev.target)) {
+      return;
+    }
+    if (this.mode !== 'orbit') {
+      this.setMode('orbit');
+    } else {
+      this.cancelGesture();
+    }
   }
 
   private handleDown(ev: MouseEvent): void {
-    if (!this.isMarkGesture(ev)) {
+    if (ev.button !== 0) {
+      return;
+    }
+    const ctrl = ev.ctrlKey || ev.metaKey;
+    if (this.mode === 'orbit' && !ctrl) {
       return;
     }
     if (this.flyouts.ownsTarget(ev.target)) {
       return;
     }
+    // Ctrl in any mode keeps the legacy dual-purpose gesture; the
+    // explicit tools pin the gesture kind.
+    this.gesture = ctrl ? 'auto' : this.mode === 'region' ? 'region' : 'point';
     this.state = 'armed';
     this.startScreen = { x: ev.clientX, y: ev.clientY };
     this.startNdc.copy(eventToNdc(ev, this.canvas));
@@ -96,6 +178,12 @@ export class MarkTool {
     const dx = ev.clientX - this.startScreen.x;
     const dy = ev.clientY - this.startScreen.y;
     if (this.state === 'armed' && Math.hypot(dx, dy) > 4) {
+      if (this.gesture === 'point') {
+        // Point tool: a drag is not a click — cancel so users don't
+        // drop marks by accident while trying to orbit.
+        this.cancelGesture();
+        return;
+      }
       this.state = 'dragging';
       this.rubberBand.style.display = '';
     }
@@ -134,6 +222,10 @@ export class MarkTool {
         this.flyouts.openExpanded(ann.id);
       }
     } else {
+      if (this.gesture === 'region') {
+        // Region tool needs an actual drag; a bare click does nothing.
+        return;
+      }
       const ndc = eventToNdc(ev, this.canvas);
       const hit = pickPoint(ndc, this.camera, mesh);
       if (hit) {
@@ -153,12 +245,12 @@ export class MarkTool {
   }
 
   /**
-   * Any plain (non-Ctrl) click outside flyouts dismisses an open flyout.
-   * Captured at window level so it works even when clicking on the
-   * canvas (which would otherwise be swallowed by OrbitControls).
+   * Any plain (non-Ctrl) click outside flyouts dismisses an open flyout
+   * — but only in orbit mode. In an explicit tool mode plain clicks ARE
+   * the marking gesture, so they must not double as "dismiss".
    */
   private handleDocClick(ev: MouseEvent): void {
-    if (ev.ctrlKey || ev.metaKey) {
+    if (ev.ctrlKey || ev.metaKey || this.mode !== 'orbit') {
       return;
     }
     if (this.flyouts.ownsTarget(ev.target)) {

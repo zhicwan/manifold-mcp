@@ -19,8 +19,19 @@ export interface MarksRuntime {
   flyouts: FlyoutLayer;
 }
 
+/**
+ * Interaction mode for the left tool rail. 'orbit' is the default
+ * camera mode (marks still reachable via Ctrl gestures); 'point' and
+ * 'region' arm the corresponding annotation gesture on plain left
+ * click / drag.
+ */
+export type MarkMode = 'orbit' | 'point' | 'region';
+
 export interface ViewerApi {
   setRenderMode(mode: RenderMode): void;
+  setMarkMode(mode: MarkMode): void;
+  /** Sync the three.js scene palette with the UI theme. */
+  setTheme(theme: 'light' | 'dark'): void;
   // VIE-4: exporters are dynamically imported on first use. The handlers
   // resolve when the module download AND the export step both complete;
   // callers can ignore the returned promise (fire-and-forget click).
@@ -42,6 +53,8 @@ export interface ViewerState {
   marksRuntime: MarksRuntime | null;
   /** Same lifecycle as marksRuntime. Bound by ViewerCanvas. */
   viewerApi: ViewerApi | null;
+  /** Active interaction tool (left tool rail). */
+  markMode: MarkMode;
 }
 
 const INITIAL: ViewerState = {
@@ -51,6 +64,7 @@ const INITIAL: ViewerState = {
   modelVersion: 'unknown',
   marksRuntime: null,
   viewerApi: null,
+  markMode: 'orbit',
 };
 
 type Listener = () => void;
@@ -106,6 +120,13 @@ function createViewerStore() {
         return;
       }
       state = { ...state, marksRuntime };
+      emit();
+    },
+    setMarkMode(markMode: MarkMode): void {
+      if (state.markMode === markMode) {
+        return;
+      }
+      state = { ...state, markMode };
       emit();
     },
     setViewerApi(viewerApi: ViewerApi | null): void {

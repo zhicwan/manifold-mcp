@@ -14,6 +14,17 @@ THREE.Object3D.DEFAULT_UP.set(0, 0, 1);
 
 export type RenderMode = 'solid' | 'wireframe' | 'edges' | 'xray';
 
+export type ViewerTheme = 'light' | 'dark';
+
+/** Scene palette per UI theme. Kept subtle so the model stays the hero. */
+const THEME_COLORS: Record<
+  ViewerTheme,
+  { background: number; gridMajor: number; gridMinor: number; model: number; edges: number }
+> = {
+  light: { background: 0xf5f5f5, gridMajor: 0xb8b8b8, gridMinor: 0xd8d8d8, model: 0xc4c8cc, edges: 0x242424 },
+  dark: { background: 0x131316, gridMajor: 0x3a3a40, gridMinor: 0x27272c, model: 0x8b9096, edges: 0xd6d6dc },
+};
+
 /**
  * Owns the three.js scene + render loop. On-demand rendering: only
  * re-renders when something has changed (mesh swap, controls movement,
@@ -30,7 +41,8 @@ export class Viewer {
   readonly camera: THREE.PerspectiveCamera;
   readonly controls: OrbitControls;
 
-  private readonly grid: THREE.GridHelper;
+  private grid: THREE.GridHelper;
+  private theme: ViewerTheme = 'light';
   private readonly material: THREE.MeshStandardMaterial;
   private mesh: THREE.Mesh | null = null;
   private edgesOverlay: THREE.LineSegments | null = null;
@@ -101,7 +113,7 @@ export class Viewer {
 
     // ViewCube needs the renderer/camera/controls fully constructed,
     // so it goes after the rAF kick-off.
-    this.viewCube = new ViewCube(this.camera, this.renderer, this.controls, this.requestRender);
+    this.viewCube = new ViewCube(this.camera, this.renderer, this.controls, this.requestRender, this.theme);
   }
 
   /**
@@ -181,7 +193,46 @@ export class Viewer {
     return this.mesh;
   }
 
-  // ── Public mode setters (called by ControlPanel) ──────────────────────
+  // ── Public mode setters (called by the React UI) ──────────────────────
+
+  /**
+   * Sync the 3D scene with the UI theme: background, grid, model
+   * material and edge-overlay colors all swap together so a dark UI
+   * never floats over a blinding light viewport.
+   */
+  setTheme(theme: ViewerTheme): void {
+    if (this.theme === theme) {
+      return;
+    }
+    this.theme = theme;
+    const colors = THEME_COLORS[theme];
+    this.scene.background = new THREE.Color(colors.background);
+    this.material.color.setHex(colors.model);
+    this.material.needsUpdate = true;
+
+    // GridHelper bakes its colors into vertex attributes at construction
+    // time, so recreate it with the new palette (preserving transform).
+    const oldGrid = this.grid;
+    const next = new THREE.GridHelper(200, 20, colors.gridMajor, colors.gridMinor);
+    next.rotation.copy(oldGrid.rotation);
+    next.scale.copy(oldGrid.scale);
+    this.scene.add(next);
+    this.scene.remove(oldGrid);
+    oldGrid.geometry.dispose();
+    if (Array.isArray(oldGrid.material)) {
+      for (const m of oldGrid.material) {
+        m.dispose();
+      }
+    } else {
+      oldGrid.material.dispose();
+    }
+    this.grid = next;
+
+    // Re-tint the edges overlay if the current render mode shows one.
+    this.applyRenderMode();
+    this.viewCube?.setTheme(theme);
+    this.requestRender();
+  }
 
   setRenderMode(mode: RenderMode): void {
     if (this.currentRenderMode === mode) {
@@ -221,7 +272,7 @@ export class Viewer {
       case 'edges': {
         // Edges = solid model + a black line overlay tracing sharp edges.
         const edges = new THREE.EdgesGeometry(this.mesh.geometry as THREE.BufferGeometry, 25);
-        const mat = new THREE.LineBasicMaterial({ color: 0x242424 });
+        const mat = new THREE.LineBasicMaterial({ color: THEME_COLORS[this.theme].edges });
         this.edgesOverlay = new THREE.LineSegments(edges, mat);
         this.edgesOverlay.renderOrder = 1;
         this.mesh.add(this.edgesOverlay);
