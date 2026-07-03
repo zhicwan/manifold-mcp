@@ -24,10 +24,18 @@ import type { PreviewPayload } from '@/types';
 export function TopBar() {
   const payload = useViewerState(s => s.payload);
   const status = useViewerState(s => s.status);
+  const modelVersion = useViewerState(s => s.modelVersion);
   const api = useViewerState(s => s.viewerApi);
   const actionsEnabled = payload !== null && api !== null;
 
-  const statusLabel = status === 'connected' ? 'Live' : status === 'connecting' ? 'Connecting…' : 'Disconnected';
+  const isDemo = modelVersion === 'demo';
+  const statusLabel = isDemo
+    ? 'Demo'
+    : status === 'connected'
+      ? 'Live'
+      : status === 'connecting'
+        ? 'Connecting…'
+        : 'Disconnected';
 
   return (
     <header className="pointer-events-none fixed inset-x-0 top-0 z-30 flex items-start justify-end gap-3 p-4">

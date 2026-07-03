@@ -95,6 +95,7 @@ export class ViewCube {
   private hovered = -1;
 
   private animating = false;
+  private disposed = false;
   private snapStart = 0;
   private readonly snapStartDir = new THREE.Vector3();
   private readonly snapEndDir = new THREE.Vector3();
@@ -174,8 +175,13 @@ export class ViewCube {
     this.gizmoScene.add(this.labelSprite);
 
     // Best-effort: redraw labels once Geist has actually loaded so the
-    // first render isn't a fallback face.
-    void document.fonts?.ready.then(() => this.regenerateLabels());
+    // first render isn't a fallback face. The promise may resolve after
+    // dispose(), so bail if the widget is already gone.
+    void document.fonts?.ready.then(() => {
+      if (!this.disposed) {
+        this.regenerateLabels();
+      }
+    });
 
     // Transparent pointer-capture overlay in the same corner.
     this.el = document.createElement('div');
@@ -241,6 +247,7 @@ export class ViewCube {
   }
 
   dispose(): void {
+    this.disposed = true;
     this.el.removeEventListener('pointermove', this.onPointerMove);
     this.el.removeEventListener('pointerleave', this.onPointerLeave);
     this.el.removeEventListener('click', this.onClick);

@@ -95,7 +95,7 @@ export class MarkTool {
       off();
     }
     this.rubberBand.remove();
-    this.canvas.style.cursor = '';
+    delete document.body.dataset.markMode;
   }
 
   getMode(): MarkToolMode {
@@ -104,7 +104,7 @@ export class MarkTool {
 
   /**
    * Switch interaction mode. Cancels any in-flight gesture, updates the
-   * canvas cursor, and notifies the UI store. Idempotent.
+   * cursor affordance, and notifies the UI store. Idempotent.
    */
   setMode(mode: MarkToolMode): void {
     if (this.mode === mode) {
@@ -112,7 +112,14 @@ export class MarkTool {
     }
     this.mode = mode;
     this.cancelGesture();
-    this.canvas.style.cursor = mode === 'orbit' ? '' : 'crosshair';
+    // Drive the cursor from a <body> attribute so styles.css can give
+    // point (crosshair) and region (cell) distinct affordances; orbit
+    // clears it and falls back to the default canvas cursor.
+    if (mode === 'orbit') {
+      delete document.body.dataset.markMode;
+    } else {
+      document.body.dataset.markMode = mode;
+    }
     this.onModeChange?.(mode);
   }
 
