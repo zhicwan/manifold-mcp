@@ -6,7 +6,7 @@ import { FeatureResolver } from './feature-resolver.js';
 import { FlyoutLayer } from './flyout.js';
 import { HoverHighlight } from './hover-highlight.js';
 import { MarkerRenderer } from './marker-renderer.js';
-import { MarkTool } from './mark-tool.js';
+import { MarkTool, type MarkToolMode } from './mark-tool.js';
 import type { PreviewPayload } from '../types.js';
 
 interface MarksDeps {
@@ -17,6 +17,8 @@ interface MarksDeps {
   overlayHost: HTMLElement;
   getMesh(): THREE.Mesh | null;
   requestRender(): void;
+  /** Notified when the mark tool's interaction mode changes. */
+  onModeChange?(mode: MarkToolMode): void;
 }
 
 /**
@@ -44,6 +46,7 @@ export function installMarks(deps: MarksDeps): MarksHandle {
     flyouts,
     deps.getMesh,
     () => resolver,
+    deps.onModeChange,
   );
   const hover = new HoverHighlight(
     deps.scene,
@@ -57,6 +60,12 @@ export function installMarks(deps: MarksDeps): MarksHandle {
   return {
     store,
     flyouts,
+    setMode(mode: MarkToolMode): void {
+      tool.setMode(mode);
+    },
+    getMode(): MarkToolMode {
+      return tool.getMode();
+    },
     frame(): void {
       flyouts.updatePositions();
     },
@@ -81,6 +90,8 @@ export function installMarks(deps: MarksDeps): MarksHandle {
 export interface MarksHandle {
   store: AnnotationStore;
   flyouts: FlyoutLayer;
+  setMode(mode: MarkToolMode): void;
+  getMode(): MarkToolMode;
   frame(): void;
   setModelVersion(v: string): void;
   setPayload(payload: PreviewPayload): void;
