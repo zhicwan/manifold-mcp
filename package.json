@@ -64,7 +64,7 @@
     "@modelcontextprotocol/sdk": "^1.29.0",
     "manifold-3d": "^3.5.1",
     "open": "^11.0.0",
-    "source-map": "^0.7.6",
+    "source-map": "^0.8.0",
     "three": "^0.185.0",
     "typescript": "^6.0.3",
     "ws": "^8.21.0",
