@@ -4,6 +4,8 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { payloadToGeometry } from './mesh-bridge.js';
 import type { PreviewPayload } from '../types.js';
 import { ViewCube } from './view-cube.js';
+import { XrRuntime } from '../xr/xr-runtime.js';
+import { computeDesktopCameraClipping } from './camera-clipping.js';
 
 // Tell three.js (and any helpers that respect Object3D.DEFAULT_UP) that
 // our world is Z-up. This MUST run before any Object3D / Camera / Helper
@@ -15,6 +17,10 @@ THREE.Object3D.DEFAULT_UP.set(0, 0, 1);
 export type RenderMode = 'solid' | 'wireframe' | 'edges' | 'xray';
 
 export type ViewerTheme = 'light' | 'dark';
+
+export interface ViewerOptions {
+  onXrSessionStateChange?(active: boolean): void;
+}
 
 /** Scene palette per UI theme. Kept subtle so the model stays the hero. */
 const THEME_COLORS: Record<
@@ -41,7 +47,9 @@ export class Viewer {
   readonly camera: THREE.PerspectiveCamera;
   readonly controls: OrbitControls;
 
+  private readonly modelRoot = new THREE.Group();
   private grid: THREE.GridHelper;
+  private readonly axes: THREE.AxesHelper;
   private theme: ViewerTheme = 'light';
   private readonly material: THREE.MeshStandardMaterial;
   private mesh: THREE.Mesh | null = null;
@@ -50,13 +58,16 @@ export class Viewer {
   private readonly perFrameHooks: Array<() => void> = [];
   private viewCube: ViewCube | null = null;
   private running = true;
-  private rafHandle = 0;
+  private readonly xr: XrRuntime;
 
   private currentRenderMode: RenderMode = 'solid';
   private modelRadius = 50;
   private modelCenter = new THREE.Vector3();
 
-  constructor(private readonly canvas: HTMLCanvasElement) {
+  constructor(
+    private readonly canvas: HTMLCanvasElement,
+    options: ViewerOptions = {},
+  ) {
     this.renderer = new THREE.WebGLRenderer({
       canvas,
       antialias: true,
@@ -94,7 +105,9 @@ export class Viewer {
     this.grid = new THREE.GridHelper(200, 20, 0xb8b8b8, 0xd8d8d8);
     this.grid.rotation.x = Math.PI / 2;
     this.scene.add(this.grid);
-    this.scene.add(new THREE.AxesHelper(20));
+    this.axes = new THREE.AxesHelper(20);
+    this.scene.add(this.axes);
+    this.scene.add(this.modelRoot);
 
     this.material = new THREE.MeshStandardMaterial({
       color: 0xc4c8cc,
@@ -109,11 +122,22 @@ export class Viewer {
     canvas.style.height = '100vh';
 
     window.addEventListener('resize', this.requestRender);
-    this.rafHandle = requestAnimationFrame(this.frame);
 
-    // ViewCube needs the renderer/camera/controls fully constructed,
-    // so it goes after the rAF kick-off.
+    // ViewCube and XR both depend on the renderer/camera/controls being
+    // fully constructed.
     this.viewCube = new ViewCube(this.camera, this.renderer, this.controls, this.requestRender, this.theme);
+    this.xr = new XrRuntime({
+      renderer: this.renderer,
+      scene: this.scene,
+      camera: this.camera,
+      controls: this.controls,
+      modelRoot: this.modelRoot,
+      getMesh: () => this.mesh,
+      setDesktopDecorationsVisible: visible => this.setDesktopDecorationsVisible(visible),
+      onSessionStateChange: active => options.onXrSessionStateChange?.(active),
+      requestRender: this.requestRender,
+    });
+    this.renderer.setAnimationLoop(this.frame);
   }
 
   /**
@@ -128,10 +152,7 @@ export class Viewer {
       return;
     }
     this.running = false;
-    if (this.rafHandle !== 0) {
-      cancelAnimationFrame(this.rafHandle);
-      this.rafHandle = 0;
-    }
+    this.renderer.setAnimationLoop(null);
     window.removeEventListener('resize', this.requestRender);
     this.controls.removeEventListener('change', this.requestRender);
 
@@ -142,13 +163,14 @@ export class Viewer {
     // points at a destroyed object and the gizmo's detach throws — leaking
     // the listener and corrupting the next viewer mount. Always tear down
     // the dependent (viewCube) before the dependency (controls).
+    this.xr.dispose();
     this.viewCube?.dispose();
     this.viewCube = null;
     this.controls.dispose();
 
     if (this.mesh) {
       this.mesh.geometry.dispose();
-      this.scene.remove(this.mesh);
+      this.modelRoot.remove(this.mesh);
       this.mesh = null;
     }
     this.disposeEdgesOverlay();
@@ -164,6 +186,8 @@ export class Viewer {
 
     this.material.dispose();
     this.perFrameHooks.length = 0;
+    this.axes.geometry.dispose();
+    (this.axes.material as THREE.Material).dispose();
 
     this.renderer.dispose();
     this.renderer.forceContextLoss();
@@ -177,16 +201,28 @@ export class Viewer {
     return this.mesh;
   }
 
+  enterVr(): Promise<void> {
+    return this.xr.enter();
+  }
+
+  zoomIn(): void {
+    this.zoomDesktopCamera(0.8);
+  }
+
+  zoomOut(): void {
+    this.zoomDesktopCamera(1.25);
+  }
+
   setMesh(payload: PreviewPayload): THREE.Mesh {
     if (this.mesh) {
       this.mesh.geometry.dispose();
-      this.scene.remove(this.mesh);
+      this.modelRoot.remove(this.mesh);
     }
     this.disposeEdgesOverlay();
 
     const geom = payloadToGeometry(payload);
     this.mesh = new THREE.Mesh(geom, this.material);
-    this.scene.add(this.mesh);
+    this.modelRoot.add(this.mesh);
     this.frameModel(geom);
     this.applyRenderMode();
     this.requestRender();
@@ -216,6 +252,7 @@ export class Viewer {
     const next = new THREE.GridHelper(200, 20, colors.gridMajor, colors.gridMinor);
     next.rotation.copy(oldGrid.rotation);
     next.scale.copy(oldGrid.scale);
+    next.visible = oldGrid.visible;
     this.scene.add(next);
     this.scene.remove(oldGrid);
     oldGrid.geometry.dispose();
@@ -334,14 +371,17 @@ export class Viewer {
     };
   }
 
-  private readonly frame = (): void => {
+  private readonly frame = (time: DOMHighResTimeStamp, frame?: XRFrame): void => {
     if (!this.running) {
       return;
     }
-    this.resize();
-    if (this.controls.enableDamping) {
+    if (!this.xr.isPresenting()) {
+      this.resize();
+    }
+    if (this.controls.enabled && this.controls.enableDamping) {
       this.controls.update();
     }
+    this.xr.update(time, frame);
     for (const hook of this.perFrameHooks) {
       hook();
     }
@@ -357,19 +397,20 @@ export class Viewer {
     // final camera position on the next frame. Otherwise a trailing
     // `needsRender = false` would clobber that request and the screen
     // would freeze on the pre-final-step camera.
-    if (this.needsRender || this.viewCube?.isAnimating()) {
+    if (this.xr.isPresenting() || this.needsRender || this.viewCube?.isAnimating()) {
       this.needsRender = false;
       this.renderer.render(this.scene, this.camera);
       // Render the view cube AFTER the main scene so it sits on top of
       // the viewport. This call also advances the gizmo's animation.
-      this.viewCube?.render();
+      if (!this.xr.isPresenting()) {
+        this.viewCube?.render();
+      }
       // If still animating after the tick, force another frame so the
       // newly-moved camera gets reflected in the main scene.
-      if (this.viewCube?.isAnimating()) {
+      if (!this.xr.isPresenting() && this.viewCube?.isAnimating()) {
         this.needsRender = true;
       }
     }
-    this.rafHandle = requestAnimationFrame(this.frame);
   };
 
   private resize(): void {
@@ -395,11 +436,44 @@ export class Viewer {
     const radius = Math.max(size.x, size.y, size.z) || 10;
     this.modelCenter.copy(center);
     this.modelRadius = radius;
+    this.xr.onModelChanged(center, radius);
     this.snapCameraToDefaultView();
-    this.camera.near = Math.max(radius / 1000, 0.01);
-    this.camera.far = radius * 100;
-    this.camera.updateProjectionMatrix();
+    const desktopClipping = computeDesktopCameraClipping(radius);
+    if (this.xr.isPresenting()) {
+      // XR uses metres and must retain its 0.01–100 m clipping range.
+      // Save the new model-derived desktop range for session exit without
+      // applying millimetre-derived values to the active XR camera.
+      this.xr.updateDesktopCameraClipping(desktopClipping.near, desktopClipping.far);
+    } else {
+      this.camera.near = desktopClipping.near;
+      this.camera.far = desktopClipping.far;
+      this.camera.updateProjectionMatrix();
+    }
     const gridSize = Math.max(50, Math.ceil((radius * 4) / 50) * 50);
     this.grid.scale.setScalar(gridSize / 200);
+  }
+
+  private setDesktopDecorationsVisible(visible: boolean): void {
+    this.grid.visible = visible;
+    this.axes.visible = visible;
+    this.viewCube?.setVisible(visible);
+    this.requestRender();
+  }
+
+  private zoomDesktopCamera(distanceFactor: number): void {
+    if (this.xr.isPresenting()) {
+      return;
+    }
+    const offset = this.camera.position.clone().sub(this.controls.target);
+    const currentDistance = offset.length();
+    if (currentDistance === 0) {
+      return;
+    }
+    const minDistance = Math.max(this.modelRadius * 0.08, this.camera.near * 2);
+    const maxDistance = Math.max(this.modelRadius * 20, minDistance);
+    const nextDistance = THREE.MathUtils.clamp(currentDistance * distanceFactor, minDistance, maxDistance);
+    this.camera.position.copy(this.controls.target).add(offset.setLength(nextDistance));
+    this.controls.update();
+    this.requestRender();
   }
 }

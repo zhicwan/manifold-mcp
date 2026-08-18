@@ -78,6 +78,12 @@ export function installMarks(deps: MarksDeps): MarksHandle {
       resolver = payload.features.length > 0 && payload.triFeatureIds.length > 0 ? new FeatureResolver(payload) : null;
       hover.reset();
     },
+    setXrPresenting(presenting: boolean): void {
+      tool.setEnabled(!presenting);
+      hover.setEnabled(!presenting);
+      markers.setVisible(!presenting);
+      deps.overlayHost.style.display = presenting ? 'none' : '';
+    },
     dispose(): void {
       hover.dispose();
       tool.dispose();
@@ -95,5 +101,6 @@ export interface MarksHandle {
   frame(): void;
   setModelVersion(v: string): void;
   setPayload(payload: PreviewPayload): void;
+  setXrPresenting(presenting: boolean): void;
   dispose(): void;
 }

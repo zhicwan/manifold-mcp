@@ -180,8 +180,6 @@ result = Manifold.levelSet(
 // Tilted panel via Manifold.hull — preferred over rotate + trimByPlane.
 // See "Tilted / leaning solids" in references/script-conventions.md for
 // the full corner-vertex recipe and why this beats trimByPlane.
-const corners: Vec3[] = [
-  /* eight tilted corners computed from (tilt, thickness, height) */
-];
+const corners: Vec3[] = [/* eight tilted corners computed from (tilt, thickness, height) */];
 const panel = Manifold.hull(corners);
 ```

@@ -1,4 +1,4 @@
-import { Box, Check, Download, Info, Moon, Sun, X } from 'lucide-react';
+import { Box, Check, Download, Glasses, Info, Moon, Sun, X } from 'lucide-react';
 import { useTheme } from 'next-themes';
 import { useEffect, useState } from 'react';
 
@@ -12,7 +12,7 @@ import {
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { glass, glassPill } from '@/components/glass';
 import { cn } from '@/lib/utils';
-import { useViewerState, type ViewerApi } from '@/store';
+import { useViewerState, type ViewerApi, type XrSessionState, type XrSupport } from '@/store';
 import type { PreviewPayload } from '@/types';
 
 /**
@@ -26,6 +26,9 @@ export function TopBar() {
   const status = useViewerState(s => s.status);
   const modelVersion = useViewerState(s => s.modelVersion);
   const api = useViewerState(s => s.viewerApi);
+  const xrSupport = useViewerState(s => s.xrSupport);
+  const xrSessionState = useViewerState(s => s.xrSessionState);
+  const xrError = useViewerState(s => s.xrError);
   const actionsEnabled = payload !== null && api !== null;
 
   const isDemo = modelVersion === 'demo';
@@ -68,7 +71,14 @@ export function TopBar() {
       </div>
 
       {/* Actions pill + collapsible info card */}
-      <ActionsCluster payload={payload} actionsEnabled={actionsEnabled} api={api} />
+      <ActionsCluster
+        payload={payload}
+        actionsEnabled={actionsEnabled}
+        api={api}
+        xrSupport={xrSupport}
+        xrSessionState={xrSessionState}
+        xrError={xrError}
+      />
     </header>
   );
 }
@@ -77,10 +87,16 @@ function ActionsCluster({
   payload,
   actionsEnabled,
   api,
+  xrSupport,
+  xrSessionState,
+  xrError,
 }: {
   payload: PreviewPayload | null;
   actionsEnabled: boolean;
   api: ViewerApi | null;
+  xrSupport: XrSupport;
+  xrSessionState: XrSessionState;
+  xrError: string | null;
 }) {
   const [infoOpen, setInfoOpen] = useState(false);
 
@@ -88,6 +104,37 @@ function ActionsCluster({
     <div className="relative">
       <div className={cn(glassPill, 'flex h-11 items-center gap-1 px-1.5')}>
         <ThemeToggle />
+        {xrSupport === 'supported' && (
+          <>
+            <div className="h-5 w-px bg-border/70" aria-hidden="true" />
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className={cn('size-8 rounded-full', xrSessionState === 'active' && 'bg-muted text-foreground')}
+                    aria-label={
+                      xrSessionState === 'active'
+                        ? 'VR session active'
+                        : xrSessionState === 'starting'
+                          ? 'Starting VR'
+                          : 'Enter VR preview'
+                    }
+                    aria-busy={xrSessionState === 'starting'}
+                    disabled={!actionsEnabled || xrSessionState !== 'idle'}
+                    onClick={() => void api?.enterVr()}
+                  />
+                }
+              >
+                <Glasses className="size-4" aria-hidden="true" />
+              </TooltipTrigger>
+              <TooltipContent side="bottom">
+                {xrSessionState === 'active' ? 'VR session active' : 'Enter VR preview'}
+              </TooltipContent>
+            </Tooltip>
+          </>
+        )}
         <div className="h-5 w-px bg-border/70" aria-hidden="true" />
         <DropdownMenu>
           <DropdownMenuTrigger
@@ -137,13 +184,19 @@ function ActionsCluster({
         </Tooltip>
       </div>
 
-      {infoOpen && payload && (
-        <section
-          aria-label="Model information"
-          className={cn(glass, 'pointer-events-auto absolute right-0 top-full mt-2 w-64 p-4')}
-        >
-          <ModelStats payload={payload} />
-        </section>
+      {(xrError || (infoOpen && payload)) && (
+        <div className="pointer-events-none absolute right-0 top-full mt-2 flex w-72 flex-col items-end gap-2">
+          {xrError && (
+            <p role="alert" className={cn(glass, 'pointer-events-auto w-full px-3 py-2 text-xs text-destructive')}>
+              {xrError}
+            </p>
+          )}
+          {infoOpen && payload && (
+            <section aria-label="Model information" className={cn(glass, 'pointer-events-auto w-64 p-4')}>
+              <ModelStats payload={payload} />
+            </section>
+          )}
+        </div>
       )}
     </div>
   );

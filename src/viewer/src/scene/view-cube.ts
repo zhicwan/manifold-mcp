@@ -231,6 +231,16 @@ export class ViewCube {
     return;
   }
 
+  setVisible(visible: boolean): void {
+    this.el.style.display = visible ? '' : 'none';
+    if (!visible) {
+      this.animating = false;
+      this.hovered = -1;
+      this.labelSprite.visible = false;
+    }
+    this.requestRender();
+  }
+
   /** Re-tint edges/faces/labels to the given theme. */
   setTheme(theme: ViewCubeTheme): void {
     if (this.theme === theme) {

@@ -14,7 +14,7 @@
     "useDefineForClassFields": true,
     "forceConsistentCasingInFileNames": true,
     "noImplicitOverride": true,
-    "types": ["react", "react-dom"],
+    "types": ["react", "react-dom", "webxr"],
     "paths": {
       "@/*": ["./src/*"]
     }

@@ -11,6 +11,8 @@ import {
   Scan,
   SquareDashed,
   Trash2,
+  ZoomIn,
+  ZoomOut,
 } from 'lucide-react';
 
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
@@ -147,6 +149,42 @@ export function RightRail() {
             </Tooltip>
           );
         })}
+
+        <div className="mx-1 my-0.5 h-px bg-border/60" aria-hidden="true" />
+
+        {/* Controller-friendly zoom controls for flat browser mode. */}
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <button
+                type="button"
+                aria-label="Zoom in"
+                disabled={!enabled}
+                className={railBtn(false, !enabled)}
+                onClick={() => api?.zoomIn()}
+              />
+            }
+          >
+            <ZoomIn className="size-4" aria-hidden="true" />
+          </TooltipTrigger>
+          <TooltipContent side="left">Zoom in</TooltipContent>
+        </Tooltip>
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <button
+                type="button"
+                aria-label="Zoom out"
+                disabled={!enabled}
+                className={railBtn(false, !enabled)}
+                onClick={() => api?.zoomOut()}
+              />
+            }
+          >
+            <ZoomOut className="size-4" aria-hidden="true" />
+          </TooltipTrigger>
+          <TooltipContent side="left">Zoom out</TooltipContent>
+        </Tooltip>
 
         <div className="mx-1 my-0.5 h-px bg-border/60" aria-hidden="true" />
 

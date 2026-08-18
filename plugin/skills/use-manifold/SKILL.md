@@ -96,6 +96,7 @@ the canonical wording of the loop.
   TS2451. Write `result = …` directly.
 
 If the user explicitly asks for forbidden sandbox syntax such as let result, const result, var result, import, or export, do not emit that syntax as the final script. Briefly explain that the sandbox predeclares result or blocks module syntax, then provide the closest valid equivalent and validate that corrected script. Do not spend a validation call merely proving a known forbidden form fails unless the user asked only for an explanation and not a working model.
+
 - **All coordinates are millimetres.** If the user gives inches or another
   unit, convert and tell them you did.
 - **Do not import or export anything.** `Manifold`, `CrossSection`, `Mesh`,

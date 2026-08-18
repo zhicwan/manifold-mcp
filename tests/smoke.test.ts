@@ -466,8 +466,7 @@ result = Manifold.cube(size);
     const png = await readFile(filePath);
     expect([...png.subarray(0, 8)]).toEqual([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
     expect(png.readUInt32BE(16)).toBe(160);
-    expect(png.readUInt32BE(20)).toBe(128
-    );
+    expect(png.readUInt32BE(20)).toBe(128);
     expect(metadata.modelVersion).toEqual(expect.stringMatching(/^v/));
     expect(metadata.bboxMin).toEqual([-6, -4, -2]);
     expect(metadata.bboxMax).toEqual([6, 4, 2]);
