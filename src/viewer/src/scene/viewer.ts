@@ -58,6 +58,7 @@ export class Viewer {
   private readonly perFrameHooks: Array<() => void> = [];
   private viewCube: ViewCube | null = null;
   private running = true;
+  private disposePromise: Promise<void> | null = null;
   private readonly xr: XrRuntime;
 
   private currentRenderMode: RenderMode = 'solid';
@@ -147,15 +148,20 @@ export class Viewer {
    * Viewer on the next mount without leaking WebGL contexts or rAF
    * loops.
    */
-  dispose(): void {
-    if (!this.running) {
-      return;
+  dispose(): Promise<void> {
+    if (this.disposePromise) {
+      return this.disposePromise;
     }
     this.running = false;
     this.renderer.setAnimationLoop(null);
     window.removeEventListener('resize', this.requestRender);
     this.controls.removeEventListener('change', this.requestRender);
 
+    this.disposePromise = this.xr.dispose().finally(() => this.disposeResources());
+    return this.disposePromise;
+  }
+
+  private disposeResources(): void {
     // VIE-3: dispose order matters. The view-cube gizmo's constructor
     // attaches a 'change' listener AND a wheel/click hook to OrbitControls.
     // Its dispose() detaches those by calling controls.removeEventListener.
@@ -163,7 +169,6 @@ export class Viewer {
     // points at a destroyed object and the gizmo's detach throws — leaking
     // the listener and corrupting the next viewer mount. Always tear down
     // the dependent (viewCube) before the dependency (controls).
-    this.xr.dispose();
     this.viewCube?.dispose();
     this.viewCube = null;
     this.controls.dispose();
@@ -437,14 +442,20 @@ export class Viewer {
     this.modelCenter.copy(center);
     this.modelRadius = radius;
     this.xr.onModelChanged(center, radius);
-    this.snapCameraToDefaultView();
     const desktopClipping = computeDesktopCameraClipping(radius);
-    if (this.xr.isPresenting()) {
-      // XR uses metres and must retain its 0.01–100 m clipping range.
-      // Save the new model-derived desktop range for session exit without
-      // applying millimetre-derived values to the active XR camera.
-      this.xr.updateDesktopCameraClipping(desktopClipping.near, desktopClipping.far);
-    } else {
+    const desktopPosition = new THREE.Vector3(
+      center.x + radius * 1.4,
+      center.y - radius * 1.4,
+      center.z + radius * 1.6,
+    );
+    const xrOwnsCamera = this.xr.updateDesktopCameraFrame(
+      desktopPosition,
+      center,
+      desktopClipping.near,
+      desktopClipping.far,
+    );
+    if (!xrOwnsCamera) {
+      this.snapCameraToDefaultView();
       this.camera.near = desktopClipping.near;
       this.camera.far = desktopClipping.far;
       this.camera.updateProjectionMatrix();

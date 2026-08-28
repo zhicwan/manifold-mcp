@@ -1,6 +1,6 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
-import { isImmersiveVrSupported, xrErrorMessage } from '../src/viewer/src/xr/support.js';
+import { isImmersiveVrSupported, watchImmersiveVrSupport, xrErrorMessage } from '../src/viewer/src/xr/support.js';
 
 describe('WebXR support detection', () => {
   it('returns false when navigator has no XR system', async () => {
@@ -33,6 +33,47 @@ describe('WebXR support detection', () => {
         },
       }),
     ).rejects.toBe(error);
+  });
+
+  it('rechecks support when XR devices change and removes the listener on cleanup', async () => {
+    let supported = false;
+    const deviceChangeListeners = new Set<EventListener>();
+    const results: boolean[] = [];
+    const errors: unknown[] = [];
+    const stop = watchImmersiveVrSupport(
+      {
+        onSupportChange(value) {
+          results.push(value);
+        },
+        onError(error) {
+          errors.push(error);
+        },
+      },
+      {
+        xr: {
+          isSessionSupported() {
+            return Promise.resolve(supported);
+          },
+          addEventListener(_type, listener) {
+            deviceChangeListeners.add(listener);
+          },
+          removeEventListener(_type, listener) {
+            deviceChangeListeners.delete(listener);
+          },
+        },
+      },
+    );
+
+    await vi.waitFor(() => expect(results).toEqual([false]));
+    supported = true;
+    for (const listener of deviceChangeListeners) {
+      listener(new Event('devicechange'));
+    }
+    await vi.waitFor(() => expect(results).toEqual([false, true]));
+
+    stop();
+    expect(deviceChangeListeners.size).toBe(0);
+    expect(errors).toEqual([]);
   });
 });
 

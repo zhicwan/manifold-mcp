@@ -13,6 +13,12 @@ import {
   interpolateTransform,
   type ObjectTransform,
 } from './model-placement.js';
+import {
+  captureDesktopCamera,
+  restoreDesktopCamera,
+  updateDesktopCameraFrame as updateSavedDesktopCameraFrame,
+  type DesktopCameraState,
+} from './desktop-camera.js';
 
 type TargetRay = ReturnType<THREE.WebXRManager['getController']>;
 type GripSpace = ReturnType<THREE.WebXRManager['getControllerGrip']>;
@@ -76,7 +82,9 @@ export class XrRuntime {
 
   private active = false;
   private entering = false;
+  private enterPromise: Promise<void> | null = null;
   private disposed = false;
+  private disposePromise: Promise<void> | null = null;
   private session: XRSession | null = null;
   private modelCenterMm = new THREE.Vector3();
   private modelViewingDistanceMeters = 1;
@@ -86,10 +94,9 @@ export class XrRuntime {
   private grabAnimation: GrabAnimation | null = null;
   private returnAnimation: ReturnAnimation | null = null;
   private desktopTransform: ObjectTransform | null = null;
+  private desktopCamera: DesktopCameraState | null = null;
   private desktopVisible = true;
   private desktopControlsEnabled = true;
-  private desktopNear = 0.1;
-  private desktopFar = 5000;
   private modelHighlight: 'idle' | 'hover' | 'held' = 'idle';
 
   constructor(options: XrRuntimeOptions) {
@@ -113,9 +120,12 @@ export class XrRuntime {
     return this.active;
   }
 
-  updateDesktopCameraClipping(near: number, far: number): void {
-    this.desktopNear = near;
-    this.desktopFar = far;
+  updateDesktopCameraFrame(position: THREE.Vector3, target: THREE.Vector3, near: number, far: number): boolean {
+    if (!this.desktopCamera) {
+      return false;
+    }
+    updateSavedDesktopCameraFrame(this.desktopCamera, position, target, near, far);
+    return true;
   }
 
   async enter(): Promise<void> {
@@ -125,16 +135,30 @@ export class XrRuntime {
     if (this.active || this.entering || this.session) {
       throw new DOMException('An immersive session is already active.', 'InvalidStateError');
     }
-    if (!navigator.xr) {
+    const xr = navigator.xr;
+    if (!xr) {
       throw new DOMException('WebXR is not available.', 'NotSupportedError');
     }
 
     this.entering = true;
+    const enterPromise = this.startSession(xr);
+    this.enterPromise = enterPromise;
+    try {
+      await enterPromise;
+    } finally {
+      if (this.enterPromise === enterPromise) {
+        this.enterPromise = null;
+      }
+      this.entering = false;
+    }
+  }
+
+  private async startSession(xr: XRSystem): Promise<void> {
     let session: XRSession | null = null;
     let prepared = false;
     try {
       // requestSession must be called directly from the user's click path.
-      session = await navigator.xr.requestSession('immersive-vr');
+      session = await xr.requestSession('immersive-vr');
       if (this.disposed) {
         await session.end();
         throw new Error('The viewer was disposed while VR was starting.');
@@ -164,8 +188,6 @@ export class XrRuntime {
         }
       }
       throw error;
-    } finally {
-      this.entering = false;
     }
   }
 
@@ -203,29 +225,41 @@ export class XrRuntime {
     }
   }
 
-  dispose(): void {
-    if (this.disposed) {
-      return;
+  dispose(): Promise<void> {
+    if (this.disposePromise) {
+      return this.disposePromise;
     }
     this.disposed = true;
-    this.renderer.xr.removeEventListener('sessionend', this.handleSessionEnd);
-    for (const binding of this.controllers) {
-      for (const remove of binding.removeListeners) {
-        remove();
+    this.disposePromise = this.finishDispose();
+    return this.disposePromise;
+  }
+
+  private async finishDispose(): Promise<void> {
+    try {
+      const pendingEnter = this.enterPromise;
+      if (pendingEnter) {
+        await Promise.allSettled([pendingEnter]);
       }
-      binding.controller.parent?.remove(binding.controller);
-      binding.grip.parent?.remove(binding.grip);
-      binding.ray.geometry.dispose();
-      binding.rayMaterial.dispose();
-      binding.reticle.geometry.dispose();
-      binding.reticle.material.dispose();
-    }
-    const activeSession = this.session;
-    this.session = null;
-    this.active = false;
-    this.restoreDesktop();
-    if (activeSession) {
-      void activeSession.end();
+      const activeSession = this.session ?? this.renderer.xr.getSession();
+      if (activeSession) {
+        await this.endSession(activeSession);
+      }
+    } finally {
+      this.active = false;
+      this.session = null;
+      this.restoreDesktop();
+      this.renderer.xr.removeEventListener('sessionend', this.handleSessionEnd);
+      for (const binding of this.controllers) {
+        for (const remove of binding.removeListeners) {
+          remove();
+        }
+        binding.controller.parent?.remove(binding.controller);
+        binding.grip.parent?.remove(binding.grip);
+        binding.ray.geometry.dispose();
+        binding.rayMaterial.dispose();
+        binding.reticle.geometry.dispose();
+        binding.reticle.material.dispose();
+      }
     }
   }
 
@@ -301,10 +335,9 @@ export class XrRuntime {
 
   private prepareDesktopForXr(): void {
     this.desktopTransform = captureTransform(this.modelRoot);
+    this.desktopCamera = captureDesktopCamera(this.camera, this.controls.target);
     this.desktopVisible = this.modelRoot.visible;
     this.desktopControlsEnabled = this.controls.enabled;
-    this.desktopNear = this.camera.near;
-    this.desktopFar = this.camera.far;
 
     this.controls.enabled = false;
     this.camera.near = XR_CAMERA_CLIPPING.near;
@@ -328,10 +361,12 @@ export class XrRuntime {
       applyTransform(this.modelRoot, this.desktopTransform);
       this.modelRoot.visible = this.desktopVisible;
     }
+    if (this.desktopCamera) {
+      restoreDesktopCamera(this.camera, this.controls.target, this.desktopCamera);
+      this.desktopCamera = null;
+    }
     this.controls.enabled = this.desktopControlsEnabled;
-    this.camera.near = this.desktopNear;
-    this.camera.far = this.desktopFar;
-    this.camera.updateProjectionMatrix();
+    this.controls.update();
     this.setDesktopDecorationsVisible(true);
     delete document.body.dataset.xrPresenting;
     this.homeTransform = null;
@@ -341,6 +376,33 @@ export class XrRuntime {
       this.resetRay(binding);
     }
     this.requestRender();
+  }
+
+  private async endSession(session: XRSession): Promise<void> {
+    if (this.renderer.xr.getSession() !== session) {
+      return;
+    }
+
+    let resolveEnded: () => void;
+    const ended = new Promise<void>(resolve => {
+      resolveEnded = resolve;
+    });
+    const handleEnd = (): void => resolveEnded();
+    session.addEventListener('end', handleEnd, { once: true });
+    try {
+      try {
+        await session.end();
+      } catch (error) {
+        if (!(error instanceof DOMException && error.name === 'InvalidStateError')) {
+          throw error;
+        }
+      }
+      if (this.renderer.xr.getSession() === session) {
+        await ended;
+      }
+    } finally {
+      session.removeEventListener('end', handleEnd);
+    }
   }
 
   private placeFromViewerPose(frame: XRFrame): void {

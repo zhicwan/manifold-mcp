@@ -7,7 +7,7 @@ import { Viewer, type RenderMode, type ViewerTheme } from '@/scene/viewer';
 import { viewerStore, type MarkMode } from '@/store';
 import { connectMeshFeed, type MeshFeedHandle } from '@/transport/ws-client';
 import type { PreviewPayload } from '@/types';
-import { isImmersiveVrSupported, xrErrorMessage } from '@/xr/support';
+import { watchImmersiveVrSupport, xrErrorMessage } from '@/xr/support';
 
 export function ViewerCanvas() {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -52,18 +52,20 @@ export function ViewerCanvas() {
     viewerStore.setXrSupport('checking');
     viewerStore.setXrSessionState('idle');
     viewerStore.setXrError(null);
-    void isImmersiveVrSupported()
-      .then(supported => {
+    const stopWatchingXrSupport = watchImmersiveVrSupport({
+      onSupportChange(supported) {
         if (mounted) {
           viewerStore.setXrSupport(supported ? 'supported' : 'unsupported');
+          viewerStore.setXrError(null);
         }
-      })
-      .catch(error => {
+      },
+      onError(error) {
         if (mounted) {
           viewerStore.setXrSupport('unsupported');
           viewerStore.setXrError(xrErrorMessage(error));
         }
-      });
+      },
+    });
 
     let feedHandle: MeshFeedHandle | null = null;
     const uplink = installAnnotationsUplink(marks.store, {
@@ -176,6 +178,7 @@ export function ViewerCanvas() {
 
     return () => {
       mounted = false;
+      stopWatchingXrSupport();
       if (demoTimer !== undefined) {
         window.clearTimeout(demoTimer);
       }
@@ -185,7 +188,9 @@ export function ViewerCanvas() {
       uplink.dispose();
       removeMarksFrameHook();
       marks.dispose();
-      viewer.dispose();
+      void viewer.dispose().catch(error => {
+        console.error('Failed to dispose the 3D viewer cleanly.', error);
+      });
       viewerStore.setPayload(null);
       viewerStore.setMarkMode('orbit');
       viewerStore.setStatus('disconnected');

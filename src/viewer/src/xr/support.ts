@@ -1,5 +1,7 @@
 export interface XrSystemProbe {
   isSessionSupported(mode: XRSessionMode): Promise<boolean>;
+  addEventListener?(type: 'devicechange', listener: EventListener): void;
+  removeEventListener?(type: 'devicechange', listener: EventListener): void;
 }
 
 export interface XrNavigatorProbe {
@@ -13,6 +15,42 @@ export async function isImmersiveVrSupported(
     return false;
   }
   return nav.xr.isSessionSupported('immersive-vr');
+}
+
+export interface XrSupportObserver {
+  onSupportChange(supported: boolean): void;
+  onError(error: unknown): void;
+}
+
+export function watchImmersiveVrSupport(
+  observer: XrSupportObserver,
+  nav: XrNavigatorProbe = navigator as Navigator & XrNavigatorProbe,
+): () => void {
+  let stopped = false;
+  let probeVersion = 0;
+  const probe = (): void => {
+    const version = ++probeVersion;
+    void isImmersiveVrSupported(nav).then(
+      supported => {
+        if (!stopped && version === probeVersion) {
+          observer.onSupportChange(supported);
+        }
+      },
+      error => {
+        if (!stopped && version === probeVersion) {
+          observer.onError(error);
+        }
+      },
+    );
+  };
+  const handleDeviceChange: EventListener = () => probe();
+
+  nav.xr?.addEventListener?.('devicechange', handleDeviceChange);
+  probe();
+  return () => {
+    stopped = true;
+    nav.xr?.removeEventListener?.('devicechange', handleDeviceChange);
+  };
 }
 
 export function xrErrorMessage(error: unknown): string {
