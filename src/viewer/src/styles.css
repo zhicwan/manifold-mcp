@@ -30,6 +30,10 @@ body[data-mark-mode='region'] #view {
   pointer-events: none;
   z-index: 5;
 }
+
+body[data-xr-presenting='true'] #marks-overlay {
+  display: none;
+}
 .marks-flyout,
 .marks-flyout-pill,
 .marks-flyout-body {

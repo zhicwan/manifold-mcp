@@ -27,11 +27,21 @@ export interface MarksRuntime {
  */
 export type MarkMode = 'orbit' | 'point' | 'region';
 
+export type XrSupport = 'checking' | 'supported' | 'unsupported';
+
+export type XrSessionState = 'idle' | 'starting' | 'active';
+
 export interface ViewerApi {
   setRenderMode(mode: RenderMode): void;
   setMarkMode(mode: MarkMode): void;
   /** Sync the three.js scene palette with the UI theme. */
   setTheme(theme: 'light' | 'dark'): void;
+  /** Move the desktop perspective camera closer to the orbit target. */
+  zoomIn(): void;
+  /** Move the desktop perspective camera farther from the orbit target. */
+  zoomOut(): void;
+  /** Start an immersive VR session from a user-activation handler. */
+  enterVr(): Promise<void>;
   // VIE-4: exporters are dynamically imported on first use. The handlers
   // resolve when the module download AND the export step both complete;
   // callers can ignore the returned promise (fire-and-forget click).
@@ -55,6 +65,12 @@ export interface ViewerState {
   viewerApi: ViewerApi | null;
   /** Active interaction tool (left tool rail). */
   markMode: MarkMode;
+  /** Result of probing navigator.xr for immersive-vr support. */
+  xrSupport: XrSupport;
+  /** Current immersive session lifecycle. */
+  xrSessionState: XrSessionState;
+  /** Human-readable session/capability error surfaced by the action panel. */
+  xrError: string | null;
 }
 
 const INITIAL: ViewerState = {
@@ -65,6 +81,9 @@ const INITIAL: ViewerState = {
   marksRuntime: null,
   viewerApi: null,
   markMode: 'orbit',
+  xrSupport: 'checking',
+  xrSessionState: 'idle',
+  xrError: null,
 };
 
 type Listener = () => void;
@@ -134,6 +153,27 @@ function createViewerStore() {
         return;
       }
       state = { ...state, viewerApi };
+      emit();
+    },
+    setXrSupport(xrSupport: XrSupport): void {
+      if (state.xrSupport === xrSupport) {
+        return;
+      }
+      state = { ...state, xrSupport };
+      emit();
+    },
+    setXrSessionState(xrSessionState: XrSessionState): void {
+      if (state.xrSessionState === xrSessionState) {
+        return;
+      }
+      state = { ...state, xrSessionState };
+      emit();
+    },
+    setXrError(xrError: string | null): void {
+      if (state.xrError === xrError) {
+        return;
+      }
+      state = { ...state, xrError };
       emit();
     },
   };

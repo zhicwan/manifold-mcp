@@ -44,6 +44,7 @@ type GestureKind =
 
 export class MarkTool {
   private readonly rubberBand: HTMLDivElement;
+  private enabled = true;
   private state: 'idle' | 'armed' | 'dragging' = 'idle';
   private mode: MarkToolMode = 'orbit';
   private gesture: GestureKind = 'auto';
@@ -102,6 +103,16 @@ export class MarkTool {
     return this.mode;
   }
 
+  setEnabled(enabled: boolean): void {
+    if (this.enabled === enabled) {
+      return;
+    }
+    if (!enabled) {
+      this.cancelGesture();
+    }
+    this.enabled = enabled;
+  }
+
   /**
    * Switch interaction mode. Cancels any in-flight gesture, updates the
    * cursor affordance, and notifies the UI store. Idempotent.
@@ -133,7 +144,7 @@ export class MarkTool {
   }
 
   private handleKeyDown(ev: KeyboardEvent): void {
-    if (ev.key !== 'Escape') {
+    if (!this.enabled || ev.key !== 'Escape') {
       return;
     }
     // Don't steal Escape from an open flyout textarea; the flyout
@@ -150,7 +161,7 @@ export class MarkTool {
   }
 
   private handleDown(ev: MouseEvent): void {
-    if (ev.button !== 0) {
+    if (!this.enabled || ev.button !== 0) {
       return;
     }
     const ctrl = ev.ctrlKey || ev.metaKey;
@@ -172,7 +183,7 @@ export class MarkTool {
   }
 
   private handleMove(ev: MouseEvent): void {
-    if (this.state === 'idle') {
+    if (!this.enabled || this.state === 'idle') {
       return;
     }
     const dx = ev.clientX - this.startScreen.x;
@@ -194,7 +205,7 @@ export class MarkTool {
   }
 
   private handleUp(ev: MouseEvent): void {
-    if (this.state === 'idle') {
+    if (!this.enabled || this.state === 'idle') {
       return;
     }
     const wasDragging = this.state === 'dragging';
@@ -250,7 +261,7 @@ export class MarkTool {
    * the marking gesture, so they must not double as "dismiss".
    */
   private handleDocClick(ev: MouseEvent): void {
-    if (ev.ctrlKey || ev.metaKey || this.mode !== 'orbit') {
+    if (!this.enabled || ev.ctrlKey || ev.metaKey || this.mode !== 'orbit') {
       return;
     }
     if (this.flyouts.ownsTarget(ev.target)) {

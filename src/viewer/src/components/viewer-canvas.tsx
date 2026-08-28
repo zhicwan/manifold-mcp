@@ -1,11 +1,13 @@
 import { useEffect, useRef } from 'react';
 
 import { installMarks } from '@/marks';
+import type { MarksHandle } from '@/marks';
 import { installAnnotationsUplink } from '@/marks/ws-uplink';
 import { Viewer, type RenderMode, type ViewerTheme } from '@/scene/viewer';
 import { viewerStore, type MarkMode } from '@/store';
 import { connectMeshFeed, type MeshFeedHandle } from '@/transport/ws-client';
 import type { PreviewPayload } from '@/types';
+import { watchImmersiveVrSupport, xrErrorMessage } from '@/xr/support';
 
 export function ViewerCanvas() {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -18,7 +20,20 @@ export function ViewerCanvas() {
       throw new Error('ViewerCanvas mounted without canvas/overlay refs');
     }
 
-    const viewer = new Viewer(canvas);
+    let marksRuntime: MarksHandle | null = null;
+    let mounted = true;
+    const viewer = new Viewer(canvas, {
+      onXrSessionStateChange(active) {
+        if (!mounted) {
+          return;
+        }
+        marksRuntime?.setXrPresenting(active);
+        viewerStore.setXrSessionState(active ? 'active' : 'idle');
+        if (active) {
+          viewerStore.setXrError(null);
+        }
+      },
+    });
     let lastPayload: PreviewPayload | null = null;
 
     const marks = installMarks({
@@ -31,7 +46,26 @@ export function ViewerCanvas() {
       requestRender: () => viewer.requestRender(),
       onModeChange: mode => viewerStore.setMarkMode(mode),
     });
+    marksRuntime = marks;
     const removeMarksFrameHook = viewer.addPerFrameHook(() => marks.frame());
+
+    viewerStore.setXrSupport('checking');
+    viewerStore.setXrSessionState('idle');
+    viewerStore.setXrError(null);
+    const stopWatchingXrSupport = watchImmersiveVrSupport({
+      onSupportChange(supported) {
+        if (mounted) {
+          viewerStore.setXrSupport(supported ? 'supported' : 'unsupported');
+          viewerStore.setXrError(null);
+        }
+      },
+      onError(error) {
+        if (mounted) {
+          viewerStore.setXrSupport('unsupported');
+          viewerStore.setXrError(xrErrorMessage(error));
+        }
+      },
+    });
 
     let feedHandle: MeshFeedHandle | null = null;
     const uplink = installAnnotationsUplink(marks.store, {
@@ -99,6 +133,31 @@ export function ViewerCanvas() {
       setTheme(theme: ViewerTheme): void {
         viewer.setTheme(theme);
       },
+      zoomIn(): void {
+        viewer.zoomIn();
+      },
+      zoomOut(): void {
+        viewer.zoomOut();
+      },
+      async enterVr(): Promise<void> {
+        if (viewerStore.getState().xrSessionState !== 'idle') {
+          return;
+        }
+        viewerStore.setXrSessionState('starting');
+        viewerStore.setXrError(null);
+        // Cancel any in-flight desktop mark gesture before XrRuntime
+        // snapshots OrbitControls.enabled for session restoration.
+        marks.setXrPresenting(true);
+        try {
+          await viewer.enterVr();
+        } catch (error) {
+          if (mounted) {
+            marks.setXrPresenting(false);
+            viewerStore.setXrSessionState('idle');
+            viewerStore.setXrError(xrErrorMessage(error));
+          }
+        }
+      },
       // Exporters are dynamically imported on first use (~85 KB min).
       async export3mf(): Promise<void> {
         if (!lastPayload) {
@@ -118,6 +177,8 @@ export function ViewerCanvas() {
     });
 
     return () => {
+      mounted = false;
+      stopWatchingXrSupport();
       if (demoTimer !== undefined) {
         window.clearTimeout(demoTimer);
       }
@@ -127,10 +188,15 @@ export function ViewerCanvas() {
       uplink.dispose();
       removeMarksFrameHook();
       marks.dispose();
-      viewer.dispose();
+      void viewer.dispose().catch(error => {
+        console.error('Failed to dispose the 3D viewer cleanly.', error);
+      });
       viewerStore.setPayload(null);
       viewerStore.setMarkMode('orbit');
       viewerStore.setStatus('disconnected');
+      viewerStore.setXrSupport('checking');
+      viewerStore.setXrSessionState('idle');
+      viewerStore.setXrError(null);
     };
   }, []);
 

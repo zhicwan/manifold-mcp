@@ -34,6 +34,7 @@ interface FeatureGeomCacheEntry {
 
 export class HoverHighlight {
   private readonly overlay: THREE.Mesh;
+  private enabled = true;
   private currentFeatureIdx = -1;
   private pendingEvent: MouseEvent | null = null;
   private lastMouseEvent: MouseEvent | null = null;
@@ -72,6 +73,9 @@ export class HoverHighlight {
     this.scene.add(this.overlay);
 
     const onMove = (ev: MouseEvent): void => {
+      if (!this.enabled) {
+        return;
+      }
       this.lastMouseEvent = ev;
       // Don't compete with marker placement / rubber band.
       if (ev.ctrlKey || ev.metaKey) {
@@ -92,7 +96,7 @@ export class HoverHighlight {
     // Re-trigger / clear on Alt key transitions so the highlight follows
     // the modifier state even when the mouse is stationary.
     const onKeyDown = (ev: KeyboardEvent): void => {
-      if (ev.key !== 'Alt' || !this.lastMouseEvent) {
+      if (!this.enabled || ev.key !== 'Alt' || !this.lastMouseEvent) {
         return;
       }
       // Replay the last mouse event with altKey now true, by passing a
@@ -135,6 +139,17 @@ export class HoverHighlight {
       entry.geometry.dispose();
     }
     this.featureGeomCache.clear();
+  }
+
+  setEnabled(enabled: boolean): void {
+    if (this.enabled === enabled) {
+      return;
+    }
+    this.enabled = enabled;
+    if (!enabled) {
+      this.pendingEvent = null;
+      this.clear();
+    }
   }
 
   dispose(): void {

@@ -81,6 +81,7 @@
     "@types/react": "^19.2.17",
     "@types/react-dom": "^19.2.3",
     "@types/three": "^0.185.0",
+    "@types/webxr": "^0.5.24",
     "@types/ws": "^8.18.1",
     "@vitejs/plugin-react": "^6.0.3",
     "class-variance-authority": "^0.7.1",

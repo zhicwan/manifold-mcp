@@ -38,6 +38,11 @@ export class MarkerRenderer {
     this.group.parent?.remove(this.group);
   }
 
+  setVisible(visible: boolean): void {
+    this.group.visible = visible;
+    this.requestRender();
+  }
+
   private sync(items: Annotation[]): void {
     const aliveIds = new Set(items.map(a => a.id));
     for (const [id, obj] of this.perAnnotation) {

@@ -255,9 +255,7 @@ export async function startMcpServer(opts: McpServerOptions): Promise<void> {
         renderBackend: 'software-rasterizer',
       };
       return {
-        content: [
-          { type: 'text', text: yaml.stringify(metadata) },
-        ],
+        content: [{ type: 'text', text: yaml.stringify(metadata) }],
         isError: false,
       };
     }
