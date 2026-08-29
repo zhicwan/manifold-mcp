@@ -416,14 +416,21 @@ class ExtensionController {
         item.live.state = 'absent';
       }
       if (!this.shuttingDown) {
-        await this.getSession().log(`Could not attach saved Manifold annotations: ${errorMessage(error)}`, {
-          level: 'warning',
-        });
+        try {
+          await this.getSession().log(`Could not attach saved Manifold annotations: ${errorMessage(error)}`, {
+            level: 'warning',
+          });
+        } catch {
+          // Logging failures must not poison the attachment queue.
+        }
       }
     });
     binding.attachmentQueue = observed;
     this.attachmentOperations.add(observed);
-    void observed.finally(() => this.attachmentOperations.delete(observed));
+    void observed.then(
+      () => this.attachmentOperations.delete(observed),
+      () => this.attachmentOperations.delete(observed),
+    );
   }
 
   async resolveLiveAnnotationContext(
@@ -431,10 +438,11 @@ class ExtensionController {
   ): Promise<{ modifiedTransformedPrompt: string } | undefined> {
     const matched: Array<{ room: RoomBinding; annotation: LiveAnnotationBinding }> = [];
     for (const binding of this.rooms.values()) {
-      for (const live of binding.liveAnnotations.values()) {
+      for (const [key, live] of binding.liveAnnotations) {
         const markerPresent = transformedPrompt.includes(live.token);
-        if (live.state === 'pushed') {
-          live.state = markerPresent ? 'pushed' : 'absent';
+        if (live.state === 'pushed' && !markerPresent) {
+          binding.liveAnnotations.delete(key);
+          continue;
         }
         if (markerPresent) {
           matched.push({ room: binding, annotation: live });

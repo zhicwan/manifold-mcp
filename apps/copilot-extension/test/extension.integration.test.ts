@@ -197,8 +197,36 @@ describe('production Copilot Extension composition', () => {
           ),
         );
         await eventually(() => harness.sendAttachments.mock.calls.length === 4);
+        const removedToken = harness.sendAttachments.mock.calls[3]?.[0].attachments[0]?.payload;
+        if (
+          !removedToken ||
+          typeof removedToken !== 'object' ||
+          Array.isArray(removedToken) ||
+          typeof removedToken.liveToken !== 'string'
+        ) {
+          throw new Error('Expected a removable live annotation token.');
+        }
         const withoutLivePill = await harness.transformPrompt('ordinary user prompt');
         expect(withoutLivePill).toBeUndefined();
+
+        clientB.socket.send(
+          JSON.stringify(
+            createAnnotationsMessage(versionB, 5, [
+              pointAnnotation('annotation-b', versionB, 'room B edited note', 'client-transport-b'),
+            ]),
+          ),
+        );
+        await eventually(() => harness.sendAttachments.mock.calls.length === 5);
+        const replacementToken = harness.sendAttachments.mock.calls[4]?.[0].attachments[0]?.payload;
+        if (
+          !replacementToken ||
+          typeof replacementToken !== 'object' ||
+          Array.isArray(replacementToken) ||
+          typeof replacementToken.liveToken !== 'string'
+        ) {
+          throw new Error('Expected a replacement live annotation token.');
+        }
+        expect(replacementToken.liveToken).not.toBe(removedToken.liveToken);
 
         await canvas.onClose?.(closeContext('canvas-a'));
         expect(application.liveRoomCount).toBe(1);
@@ -217,6 +245,62 @@ describe('production Copilot Extension composition', () => {
       }
     } finally {
       clientA.socket.terminate();
+    }
+  });
+
+  it('keeps the annotation attachment queue usable when warning logging rejects', async () => {
+    let sendAttempt = 0;
+    const harness = createHarness({
+      sendAttachments: () => {
+        sendAttempt += 1;
+        return sendAttempt === 1 ? Promise.reject(new Error('attachment failed')) : Promise.resolve();
+      },
+      log: () => Promise.reject(new Error('logging failed')),
+    });
+    application = await startCopilotExtension(harness.startOptions);
+    const opened = await harness.canvas().open(openContext('canvas-attachment-recovery'));
+    const client = await openRoom(requiredUrl(opened.url));
+    const unhandled: unknown[] = [];
+    const onUnhandled = (reason: unknown): void => {
+      unhandled.push(reason);
+    };
+    process.on('unhandledRejection', onUnhandled);
+    try {
+      await harness
+        .tool('manifold_execute_script')
+        .handler?.({ code: 'result = Manifold.cube(1);' }, invocation('manifold_execute_script'));
+      const version = requiredString(
+        (await client.messages.waitFor(message => message.kind === 'model_version' && message.modelVersion !== 'none'))
+          .modelVersion,
+      );
+      client.socket.send(
+        JSON.stringify(createAnnotationsMessage(version, 1, [pointAnnotation('failed', version, 'first note')])),
+      );
+      await eventually(() => harness.sendAttachments.mock.calls.length === 1 && harness.log.mock.calls.length === 1);
+
+      client.socket.send(
+        JSON.stringify(
+          createAnnotationsMessage(version, 2, [
+            pointAnnotation('failed', version, 'first note'),
+            pointAnnotation('recovered', version, 'second note'),
+          ]),
+        ),
+      );
+      await eventually(() => harness.sendAttachments.mock.calls.length === 2);
+      expect(harness.sendAttachments.mock.calls[1]?.[0].attachments).toMatchObject([
+        {
+          payload: {
+            snapshot: {
+              annotations: [{ id: 'recovered', note: 'second note' }],
+            },
+          },
+        },
+      ]);
+      await new Promise<void>(resolvePromise => setTimeout(resolvePromise, 10));
+      expect(unhandled).toEqual([]);
+    } finally {
+      process.off('unhandledRejection', onUnhandled);
+      client.socket.terminate();
     }
   });
 
@@ -432,6 +516,7 @@ interface HarnessOptions {
   sendAttachments?: (
     input: Parameters<CopilotExtensionSession['rpc']['extensions']['sendAttachmentsToMessage']>[0],
   ) => Promise<void>;
+  log?: (...args: Parameters<CopilotExtensionSession['log']>) => Promise<void>;
   disconnect?: () => Promise<void>;
   joinSession?: (config: JoinSessionConfig, session: CopilotExtensionSession) => Promise<CopilotExtensionSession>;
   shutdownTimings?: {
@@ -450,12 +535,15 @@ function createHarness(options: HarnessOptions = {}) {
     (params: Parameters<CopilotExtensionSession['rpc']['extensions']['sendAttachmentsToMessage']>[0]) =>
       options.sendAttachments ? options.sendAttachments(params) : Promise.resolve(),
   );
+  const log = vi.fn((...args: Parameters<CopilotExtensionSession['log']>) =>
+    options.log ? options.log(...args) : Promise.resolve(),
+  );
   const disconnect = vi.fn(() => (options.disconnect ? options.disconnect() : Promise.resolve()));
   const session: CopilotExtensionSession = {
     sessionId: 'mock-session',
     workspacePath: testWorkspace,
     send,
-    log: vi.fn(() => Promise.resolve()),
+    log,
     disconnect,
     rpc: {
       extensions: {
@@ -492,6 +580,7 @@ function createHarness(options: HarnessOptions = {}) {
     renderer,
     send,
     sendAttachments,
+    log,
     disconnect,
     startOptions: {
       sdk,
