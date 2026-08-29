@@ -99,12 +99,12 @@ async function startAssetServer() {
         'X-Content-Type-Options': 'nosniff',
       });
       response.end(request.method === 'HEAD' ? undefined : asset.bytes);
-    } catch (error) {
+    } catch {
       response.writeHead(500, {
         Connection: 'close',
         'Content-Type': 'application/json; charset=utf-8',
       });
-      response.end(JSON.stringify({ error: serializeError(error) }));
+      response.end(JSON.stringify({ error: 'internal server error' }));
     }
   });
 
