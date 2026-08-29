@@ -30,7 +30,8 @@ export interface AnnotationsUplinkOptions {
  * The wire format is intentionally smaller than the in-memory
  * Annotation: per-triangle indices for region selections are reduced
  * to a triCount, since AI consumers only care about the part label,
- * location, and note.
+ * location, and note. Browser-local intent/state/batchId metadata is
+ * deliberately not copied into WireAnnotation.
  */
 export function installAnnotationsUplink(
   store: AnnotationStore,

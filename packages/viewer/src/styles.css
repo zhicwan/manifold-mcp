@@ -15,11 +15,11 @@
 }
 
 /* Cursor affordance per interaction mode (set on <body> by MarkTool). */
-body[data-mark-mode='point'] #view {
+body[data-mark-mode='annotate'] #view {
   cursor: crosshair;
 }
-body[data-mark-mode='region'] #view {
-  cursor: cell;
+body[data-mark-mode='select'] #view {
+  cursor: copy;
 }
 
 /* ── Marks: overlay layer (flyouts + rubber band) ───────────────────── */

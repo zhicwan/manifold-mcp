@@ -1,43 +1,187 @@
-import type { Annotation, AnnotationKind } from './types.js';
 import { MAX_ANNOTATION_NOTE_LENGTH } from '@manifold3d/protocol/wire/annotations.js';
 
-type Listener = (annotations: Annotation[]) => void;
+import type {
+  Annotation,
+  AnnotationKind,
+  CommentAnnotation,
+  CommentAnnotationInput,
+  CommentBatchSnapshot,
+  SelectionAnnotation,
+  SelectionAnnotationInput,
+} from './types.js';
+
+type Listener = (annotations: readonly Annotation[]) => void;
 
 /**
- * In-memory store for the viewer's active annotations, with a small
- * pub/sub interface so the sidebar, marker layer, and (in M2) the
- * WS uplink can all stay in sync without explicit wiring.
+ * In-memory transactional store for the viewer's active annotations.
  *
- * The store is intentionally minimal: no undo stack, no persistence.
- * M1 keeps annotations only for the lifetime of the page.
+ * Comment annotations accumulate in one active draft batch. Freezing the
+ * batch commits every draft atomically and rotates to a fresh batch; cancel
+ * removes only the active drafts. Selection annotations use a separate
+ * pending -> committed/failed lifecycle.
  */
 export class AnnotationStore {
   private readonly items = new Map<string, Annotation>();
   private readonly listeners = new Set<Listener>();
   private seqByKind: Record<AnnotationKind, number> = { point: 0, region: 0 };
+  private idSequence = 0;
+  private batchSequence = 0;
+  private currentCommentBatchId = this.createBatchId('comments');
   private modelVersion = 'unknown';
   private revision = 0;
-  private snapshot: Annotation[] = [];
+  private snapshot: readonly Annotation[] = Object.freeze([]);
 
-  /** Replace every annotation with the empty set; used on new model push. */
-  clear(): void {
-    if (this.items.size === 0) {
-      return;
-    }
-    this.items.clear();
-    this.seqByKind = { point: 0, region: 0 };
-    this.commit();
+  getCurrentCommentBatchId(): string {
+    return this.currentCommentBatchId;
   }
 
-  /** Update model version and clear stale annotations. */
-  setModelVersion(v: string): void {
-    if (this.modelVersion === v) {
-      return;
+  /** Immutable snapshot of the active batch's draft comments. */
+  getCurrentDraftBatchSnapshot(): readonly CommentAnnotation[] {
+    return this.getDraftComments(this.currentCommentBatchId);
+  }
+
+  getCurrentDraftBatchIds(): readonly string[] {
+    return this.getCurrentDraftBatchSnapshot().map(annotation => annotation.id);
+  }
+
+  getCurrentDraftBatchCount(): number {
+    return this.getCurrentDraftBatchSnapshot().length;
+  }
+
+  /** Compact current-batch contract used by the React integration. */
+  getDraftBatch(): CommentBatchSnapshot {
+    return makeBatchSnapshot(this.currentCommentBatchId, this.getDraftComments(this.currentCommentBatchId));
+  }
+
+  /**
+   * Commit every draft comment in the active (or explicitly captured) batch.
+   * A non-empty successful freeze rotates the active batch and returns the
+   * committed transaction snapshot.
+   */
+  freezeBatch(batchId: string = this.currentCommentBatchId): CommentBatchSnapshot | undefined {
+    const comments = this.getBatchComments(batchId, new Set(['draft', 'pending']));
+    if (comments.length === 0) {
+      return undefined;
     }
+    for (const comment of comments) {
+      this.items.set(comment.id, freezeAnnotation({ ...comment, state: 'committed' }));
+    }
+    if (batchId === this.currentCommentBatchId) {
+      this.rotateCommentBatch();
+    }
+    this.commit();
+    return makeBatchSnapshot(
+      batchId,
+      comments.map(comment => freezeAnnotation({ ...comment, state: 'committed' })),
+    );
+  }
+
+  /** Seal the current batch while a host action is in flight and rotate writes. */
+  sealBatch(batchId: string): CommentBatchSnapshot | undefined {
+    const drafts = this.getDraftComments(batchId);
+    if (drafts.length === 0) {
+      return undefined;
+    }
+    for (const draft of drafts) {
+      this.items.set(draft.id, freezeAnnotation({ ...draft, state: 'pending' }));
+    }
+    if (batchId === this.currentCommentBatchId) {
+      this.rotateCommentBatch();
+    }
+    this.commit();
+    return makeBatchSnapshot(
+      batchId,
+      drafts.map(draft => freezeAnnotation({ ...draft, state: 'pending' })),
+    );
+  }
+
+  /** Merge a failed sealed batch back into the active editable transaction. */
+  restoreBatch(batchId: string): CommentBatchSnapshot | undefined {
+    const pending = this.getBatchComments(batchId, new Set(['pending']));
+    if (pending.length === 0) {
+      return undefined;
+    }
+    for (const comment of pending) {
+      this.items.set(
+        comment.id,
+        freezeAnnotation({
+          ...comment,
+          state: 'draft',
+          batchId: this.currentCommentBatchId,
+        }),
+      );
+    }
+    this.commit();
+    return this.getDraftBatch();
+  }
+
+  /** Remove only draft comments in the active batch, then start a new batch. */
+  cancelCurrentBatch(): readonly string[] {
+    return this.cancelBatch(this.currentCommentBatchId);
+  }
+
+  /** Cancel a captured batch only if it is still the active draft batch. */
+  cancelBatch(batchId: string): readonly string[] {
+    if (batchId !== this.currentCommentBatchId) {
+      return [];
+    }
+    const ids = this.getCurrentDraftBatchIds();
+    for (const id of ids) {
+      this.items.delete(id);
+    }
+    this.rotateCommentBatch();
+    if (ids.length > 0) {
+      this.commit();
+    }
+    return ids;
+  }
+
+  /** Transition one pending selection to committed after attachment succeeds. */
+  commitPendingSelection(id: string): SelectionAnnotation | undefined {
+    const current = this.items.get(id);
+    if (!current || current.intent !== 'selection' || current.state !== 'pending') {
+      return undefined;
+    }
+    const committed: SelectionAnnotation = freezeAnnotation({ ...current, state: 'committed' });
+    this.items.set(id, committed);
+    this.commit();
+    return committed;
+  }
+
+  commitSelection(id: string): SelectionAnnotation | undefined {
+    return this.commitPendingSelection(id);
+  }
+
+  /** Remove one pending selection after attachment fails. */
+  removeFailedSelection(id: string): boolean {
+    const current = this.items.get(id);
+    if (!current || current.intent !== 'selection' || current.state !== 'pending') {
+      return false;
+    }
+    this.items.delete(id);
+    this.commit();
+    return true;
+  }
+
+  removeSelection(id: string): boolean {
+    return this.removeFailedSelection(id);
+  }
+
+  /** Clear all annotations and rotate transactions for a newly loaded model. */
+  resetForModelVersion(v: string): void {
     this.modelVersion = v;
     this.items.clear();
     this.seqByKind = { point: 0, region: 0 };
+    this.idSequence = 0;
+    this.rotateCommentBatch();
     this.commit();
+  }
+
+  /** Backward-compatible model update; identical versions are already current. */
+  setModelVersion(v: string): void {
+    if (this.modelVersion !== v) {
+      this.resetForModelVersion(v);
+    }
   }
 
   getModelVersion(): string {
@@ -59,46 +203,71 @@ export class AnnotationStore {
     this.revision = Math.max(this.revision, committedRevision);
   }
 
-  add(input: Omit<Annotation, 'id' | 'createdAt' | 'modelVersion' | 'partLabel'> & { partLabel?: string }): Annotation {
+  /** Create a draft comment in the current transaction batch. */
+  addComment(input: CommentAnnotationInput): CommentAnnotation {
     assertNoteLength(input.note);
-    const seq = ++this.seqByKind[input.kind];
-    const partLabel = input.partLabel && input.partLabel.length > 0 ? input.partLabel : `${input.kind}#${seq}`;
-    const ann: Annotation = {
-      id: `ann_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`,
-      createdAt: Date.now(),
-      modelVersion: this.modelVersion,
-      ...input,
-      partLabel,
-    };
+    const ann: CommentAnnotation = freezeAnnotation({
+      ...this.createBase(input),
+      intent: 'comment',
+      state: 'draft',
+      batchId: this.currentCommentBatchId,
+      note: input.note,
+    });
     this.items.set(ann.id, ann);
     this.commit();
     return ann;
   }
 
-  update(id: string, patch: Partial<Pick<Annotation, 'note'>>): void {
+  /** Compatibility alias: annotations created through add() are comments. */
+  add(input: CommentAnnotationInput): CommentAnnotation {
+    return this.addComment(input);
+  }
+
+  /** Create a geometry-only selection awaiting attachment by ViewerCanvas. */
+  addSelection(input: SelectionAnnotationInput): SelectionAnnotation {
+    const ann: SelectionAnnotation = freezeAnnotation({
+      ...this.createBase(input),
+      intent: 'selection',
+      state: 'pending',
+      batchId: this.createBatchId('selection'),
+      note: '',
+    });
+    this.items.set(ann.id, ann);
+    this.commit();
+    return ann;
+  }
+
+  /** Normal note edits are allowed only for draft comments. */
+  update(id: string, patch: Partial<Pick<CommentAnnotation, 'note'>>): boolean {
+    const cur = this.items.get(id);
+    if (!cur || cur.intent !== 'comment' || cur.state !== 'draft') {
+      return false;
+    }
     if (patch.note !== undefined) {
       assertNoteLength(patch.note);
     }
-    const cur = this.items.get(id);
-    if (!cur) {
-      return;
-    }
 
-    this.items.set(id, { ...cur, ...patch });
+    this.items.set(id, freezeAnnotation({ ...cur, ...patch }));
     this.commit();
+    return true;
   }
 
-  remove(id: string): void {
-    if (this.items.delete(id)) {
-      this.commit();
+  /** Normal removal cannot mutate committed annotations. */
+  remove(id: string): boolean {
+    const current = this.items.get(id);
+    if (!current || current.intent !== 'comment' || current.state !== 'draft') {
+      return false;
     }
+    this.items.delete(id);
+    this.commit();
+    return true;
   }
 
   get(id: string): Annotation | undefined {
     return this.items.get(id);
   }
 
-  list(): Annotation[] {
+  list(): readonly Annotation[] {
     return this.snapshot;
   }
 
@@ -114,11 +283,47 @@ export class AnnotationStore {
 
   private commit(): void {
     this.revision += 1;
-    this.snapshot = [...this.items.values()].sort((a, b) => a.createdAt - b.createdAt);
+    const snapshot = [...this.items.values()].sort((a, b) => a.createdAt - b.createdAt);
+    Object.freeze(snapshot);
+    this.snapshot = snapshot;
     const snap = this.snapshot;
     for (const fn of this.listeners) {
       fn(snap);
     }
+  }
+
+  private createBase(input: SelectionAnnotationInput): Omit<Annotation, 'intent' | 'state' | 'batchId' | 'note'> {
+    const seq = ++this.seqByKind[input.kind];
+    return {
+      id: `ann_${Date.now().toString(36)}_${(++this.idSequence).toString(36)}`,
+      createdAt: Date.now(),
+      modelVersion: this.modelVersion,
+      kind: input.kind,
+      anchorWorld: frozenTuple3(input.anchorWorld),
+      worldCoord: frozenTuple3(input.worldCoord),
+      triIds: frozenNumbers(input.triIds),
+      partLabel: input.partLabel && input.partLabel.length > 0 ? input.partLabel : `${input.kind}#${seq}`,
+    };
+  }
+
+  private getDraftComments(batchId: string): CommentAnnotation[] {
+    return this.getBatchComments(batchId, new Set(['draft']));
+  }
+
+  private getBatchComments(batchId: string, states: ReadonlySet<CommentAnnotation['state']>): CommentAnnotation[] {
+    return this.snapshot.filter(
+      (annotation): annotation is CommentAnnotation =>
+        annotation.intent === 'comment' && states.has(annotation.state) && annotation.batchId === batchId,
+    );
+  }
+
+  private rotateCommentBatch(): void {
+    this.currentCommentBatchId = this.createBatchId('comments');
+  }
+
+  private createBatchId(intent: 'comments' | 'selection'): string {
+    this.batchSequence += 1;
+    return `batch_${intent}_${Date.now().toString(36)}_${this.batchSequence.toString(36)}`;
   }
 }
 
@@ -126,4 +331,37 @@ function assertNoteLength(note: string): void {
   if (note.length > MAX_ANNOTATION_NOTE_LENGTH) {
     throw new RangeError(`Annotation note cannot exceed ${MAX_ANNOTATION_NOTE_LENGTH} characters.`);
   }
+}
+
+function makeBatchSnapshot(batchId: string, annotations: readonly CommentAnnotation[]): CommentBatchSnapshot {
+  const frozenAnnotations = [...annotations];
+  const annotationIds = frozenAnnotations.map(annotation => annotation.id);
+  Object.freeze(frozenAnnotations);
+  Object.freeze(annotationIds);
+  const snapshot = {
+    batchId,
+    annotations: frozenAnnotations,
+    annotationIds,
+    ids: annotationIds,
+    count: frozenAnnotations.length,
+  };
+  Object.freeze(snapshot);
+  return snapshot;
+}
+
+function freezeAnnotation<T extends Annotation>(annotation: T): T {
+  Object.freeze(annotation);
+  return annotation;
+}
+
+function frozenTuple3(value: readonly [number, number, number]): [number, number, number] {
+  const copy: [number, number, number] = [value[0], value[1], value[2]];
+  Object.freeze(copy);
+  return copy;
+}
+
+function frozenNumbers(value: readonly number[]): number[] {
+  const copy = [...value];
+  Object.freeze(copy);
+  return copy;
 }

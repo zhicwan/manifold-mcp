@@ -5,9 +5,10 @@ import { Runner } from '@manifold3d/modeling/runner/host.js';
 import {
   createInMemoryViewerAssetProvider,
   startViewerHost,
-  type ViewerAnnotationCommit,
   type ViewerAssetManifest,
   type ViewerHost,
+  type HostActionHandlerContext,
+  type HostActionHandlerResult,
   type ViewerRoom,
 } from '@manifold3d/viewer-host/viewer-host.js';
 
@@ -20,24 +21,18 @@ import { createExtensionTools } from './tools.js';
 
 export const MANIFOLD_CANVAS_ID = 'manifold3d-viewer';
 export const MANIFOLD_CANVAS_DISPLAY_NAME = 'Manifold 3D Viewer';
+export const ATTACH_ANNOTATION_BATCH_ACTION_ID = 'attach-annotation-batch';
+export const FIX_ANNOTATION_BATCH_ACTION_ID = 'fix-annotation-batch';
+export const ATTACH_LOCATION_SELECTION_ACTION_ID = 'attach-location-selection';
+export const FIX_ANNOTATION_BATCH_PROMPT = 'Revise the current manifold-3d model using the attached annotation batch.';
 export const DEFAULT_SESSION_DISCONNECT_TIMEOUT_MS = 500;
-export const DEFAULT_ATTACHMENT_DRAIN_TIMEOUT_MS = 250;
-const LIVE_ANNOTATION_SETTLE_MS = 25;
+export const DEFAULT_FIX_SEND_DRAIN_TIMEOUT_MS = 250;
 
 interface RoomBinding {
   instanceId: string;
   room: ViewerRoom;
   cleanup: Array<() => void>;
-  attachmentQueue: Promise<void>;
-  liveAnnotations: Map<string, LiveAnnotationBinding>;
   closed: boolean;
-}
-
-interface LiveAnnotationBinding {
-  annotationId: string;
-  clientId: string | undefined;
-  token: string;
-  state: 'absent' | 'queued' | 'pushed';
 }
 
 export interface StartCopilotExtensionOptions {
@@ -50,7 +45,7 @@ export interface StartCopilotExtensionOptions {
   preferredPort?: number;
   shutdownTimings?: {
     disconnectTimeoutMs?: number;
-    attachmentDrainTimeoutMs?: number;
+    fixSendDrainTimeoutMs?: number;
   };
 }
 
@@ -102,7 +97,7 @@ export async function startCopilotExtension(
   }
   const controller = new ExtensionController(host, modelingSession, {
     disconnectTimeoutMs: options.shutdownTimings?.disconnectTimeoutMs ?? DEFAULT_SESSION_DISCONNECT_TIMEOUT_MS,
-    attachmentDrainTimeoutMs: options.shutdownTimings?.attachmentDrainTimeoutMs ?? DEFAULT_ATTACHMENT_DRAIN_TIMEOUT_MS,
+    fixSendDrainTimeoutMs: options.shutdownTimings?.fixSendDrainTimeoutMs ?? DEFAULT_FIX_SEND_DRAIN_TIMEOUT_MS,
   });
   const canvas = options.sdk.createCanvas(controller.canvasOptions());
   const tools = createExtensionTools({
@@ -121,9 +116,6 @@ export async function startCopilotExtension(
     session = await options.sdk.joinSession({
       canvases: [canvas],
       tools,
-      hooks: {
-        onUserPromptTransformed: input => controller.resolveLiveAnnotationContext(input.transformedPrompt),
-      },
       onEvent,
     });
   } catch (error) {
@@ -152,7 +144,7 @@ export async function startCopilotExtension(
 
 class ExtensionController {
   private readonly rooms = new Map<string, RoomBinding>();
-  private readonly attachmentOperations = new Set<Promise<void>>();
+  private readonly pendingFixSends = new Set<Promise<void>>();
   private session: CopilotExtensionSession | undefined;
   private shuttingDown = false;
   private shutdownPromise: Promise<void> | undefined;
@@ -162,7 +154,7 @@ class ExtensionController {
     private readonly modelingSession: ModelingSession,
     private readonly shutdownTimings: {
       disconnectTimeoutMs: number;
-      attachmentDrainTimeoutMs: number;
+      fixSendDrainTimeoutMs: number;
     },
   ) {}
 
@@ -248,6 +240,19 @@ class ExtensionController {
     this.shuttingDown = true;
     this.shutdownPromise = (async () => {
       const errors: unknown[] = [];
+      const pendingFixSends = await settlePromiseWithin(
+        Promise.allSettled([...this.pendingFixSends]),
+        this.shutdownTimings.fixSendDrainTimeoutMs,
+      );
+      if (pendingFixSends.status === 'fulfilled') {
+        errors.push(...rejectedReasons(pendingFixSends.value));
+      } else if (pendingFixSends.status === 'timed-out') {
+        process.stderr.write(
+          '[manifold3d-extension] pending annotation fix sends exceeded the drain window; closing locally.\n',
+        );
+      }
+      this.pendingFixSends.clear();
+
       if (options.disconnectSession === true && this.session) {
         const disconnect = await settleCallWithin(
           () => this.session!.disconnect(),
@@ -259,19 +264,6 @@ class ExtensionController {
           process.stderr.write('[manifold3d-extension] session disconnect timed out; continuing local cleanup.\n');
         }
       }
-
-      const pendingAttachments = await settlePromiseWithin(
-        Promise.allSettled([...this.attachmentOperations]),
-        this.shutdownTimings.attachmentDrainTimeoutMs,
-      );
-      if (pendingAttachments.status === 'fulfilled') {
-        errors.push(...rejectedReasons(pendingAttachments.value));
-      } else if (pendingAttachments.status === 'timed-out') {
-        process.stderr.write(
-          '[manifold3d-extension] pending annotation attachments exceeded the drain window; closing locally.\n',
-        );
-      }
-      this.attachmentOperations.clear();
 
       const rooms = [...this.rooms.values()];
       this.rooms.clear();
@@ -309,16 +301,44 @@ class ExtensionController {
       instanceId,
       room,
       cleanup: [],
-      attachmentQueue: Promise.resolve(),
-      liveAnnotations: new Map(),
       closed: false,
     };
     this.rooms.set(instanceId, binding);
     try {
       binding.cleanup.push(
-        room.subscribeAnnotationCommits(commit => {
-          this.queueAnnotationAttachment(binding, commit);
-        }),
+        room.registerAction(
+          {
+            id: ATTACH_ANNOTATION_BATCH_ACTION_ID,
+            label: 'Attach annotations',
+            icon: 'message',
+            slot: 'annotation-batch',
+            tone: 'default',
+            requires: ['model', 'annotations'],
+          },
+          context => this.attachAnnotationBatch(binding, context),
+        ),
+        room.registerAction(
+          {
+            id: FIX_ANNOTATION_BATCH_ACTION_ID,
+            label: 'Fix annotations',
+            icon: 'wand',
+            slot: 'annotation-batch',
+            tone: 'primary',
+            requires: ['model', 'annotations'],
+          },
+          context => this.fixAnnotationBatch(binding, context),
+        ),
+        room.registerAction(
+          {
+            id: ATTACH_LOCATION_SELECTION_ACTION_ID,
+            label: 'Attach location',
+            icon: 'message',
+            slot: 'selection-gesture',
+            tone: 'default',
+            requires: ['model', 'annotations'],
+          },
+          context => this.attachLocationSelection(binding, context),
+        ),
       );
       const current = this.modelingSession.getCurrentModel();
       if (current) {
@@ -349,153 +369,134 @@ class ExtensionController {
     await binding.room.close();
   }
 
-  private queueAnnotationAttachment(binding: RoomBinding, commit: ViewerAnnotationCommit): void {
-    const changedIds = new Set(commit.changedAnnotationIds);
-    const pending = commit.items.flatMap(annotation => {
-      if (!changedIds.has(annotation.id) || annotation.note.trim().length === 0) {
-        return [];
-      }
-      const key = annotationBindingKey(annotation.id, annotation.clientId);
-      let live = binding.liveAnnotations.get(key);
-      if (!live) {
-        live = {
-          annotationId: annotation.id,
-          clientId: annotation.clientId,
-          token: crypto.randomUUID(),
-          state: 'absent',
-        };
-        binding.liveAnnotations.set(key, live);
-      }
-      if (live.state !== 'absent') {
-        return [];
-      }
-      live.state = 'queued';
-      return [
-        {
-          live,
-          title: annotationAttachmentTitle(annotation.partLabel),
-          snapshot: annotationPayloadAsJsonValue(
-            createAnnotationAttachment({
-              modelVersion: commit.modelVersion,
-              annotationRevision: commit.revision,
-              annotations: [annotation],
-            }).payload,
-          ),
-        },
-      ];
-    });
-    if (pending.length === 0) {
-      return;
-    }
+  private async attachAnnotationBatch(
+    binding: RoomBinding,
+    context: HostActionHandlerContext,
+  ): Promise<HostActionHandlerResult> {
+    const attachment = this.buildBatchAttachment(context);
+    await this.pushAttachment(binding, annotationBatchTitle(attachment.batchId), attachment.payload);
+    return {
+      status: 'succeeded',
+      message: `Attached ${context.annotations.length} annotation${context.annotations.length === 1 ? '' : 's'}.`,
+    };
+  }
 
-    const operation = binding.attachmentQueue.then(async () => {
-      if (!this.canPublishTo(binding)) {
-        for (const item of pending) {
-          item.live.state = 'absent';
-        }
-        return;
-      }
-      await this.getSession().rpc.extensions.sendAttachmentsToMessage({
-        instanceId: binding.instanceId,
-        attachments: pending.map(item => ({
-          type: 'extension_context',
-          title: item.title,
-          payload: {
-            mode: 'live',
-            liveToken: item.live.token,
-            snapshot: item.snapshot,
-          },
-        })),
-      });
-      for (const item of pending) {
-        item.live.state = 'pushed';
-      }
-    });
-    const observed = operation.catch(async error => {
-      for (const item of pending) {
-        item.live.state = 'absent';
-      }
-      if (!this.shuttingDown) {
-        try {
-          await this.getSession().log(`Could not attach saved Manifold annotations: ${errorMessage(error)}`, {
+  private async fixAnnotationBatch(
+    binding: RoomBinding,
+    context: HostActionHandlerContext,
+  ): Promise<HostActionHandlerResult> {
+    const attachment = this.buildBatchAttachment(context);
+    await this.pushAttachment(binding, annotationBatchTitle(attachment.batchId), attachment.payload);
+    const session = this.getSession();
+    const operation = new Promise<void>(resolve => setImmediate(resolve))
+      .then(() => {
+        context.publish.running('Sending annotation fix to Copilot.');
+        return session.send({
+          mode: 'enqueue',
+          prompt: FIX_ANNOTATION_BATCH_PROMPT,
+        });
+      })
+      .then(
+        () => {
+          context.publish.succeeded('Annotation fix was sent to Copilot.');
+        },
+        error => {
+          context.publish.failed(`Could not send annotation fix: ${truncateStatusMessage(errorMessage(error))}`);
+          return this.logBestEffort(`Could not send Manifold annotation fix: ${errorMessage(error)}`, {
             level: 'warning',
           });
-        } catch {
-          // Logging failures must not poison the attachment queue.
-        }
-      }
+        },
+      );
+    this.trackFixSend(operation);
+
+    return {
+      status: 'accepted',
+      operationId: context.requestId,
+      message: 'Annotation fix is queued.',
+    };
+  }
+
+  private async attachLocationSelection(
+    binding: RoomBinding,
+    context: HostActionHandlerContext,
+  ): Promise<HostActionHandlerResult> {
+    requireExplicitAnnotationCount(context, 1, 'Location selection');
+    const attachment = createAnnotationAttachment({
+      mode: 'location-selection',
+      modelVersion: context.modelVersion,
+      annotationRevision: context.annotationRevision,
+      annotations: context.annotations,
     });
-    binding.attachmentQueue = observed;
-    this.attachmentOperations.add(observed);
-    void observed.then(
-      () => this.attachmentOperations.delete(observed),
-      () => this.attachmentOperations.delete(observed),
+    await this.pushAttachment(
+      binding,
+      locationSelectionTitle(attachment.payload.annotations[0].partLabel),
+      attachment.payload,
+    );
+    return { status: 'succeeded', message: 'Attached selected location.' };
+  }
+
+  private buildBatchAttachment(context: HostActionHandlerContext) {
+    requireExplicitAnnotationCount(context, undefined, 'Annotation batch');
+    const batchId = parseBatchId(context.input);
+    return {
+      batchId,
+      ...createAnnotationAttachment({
+        mode: 'annotation-batch',
+        batchId,
+        modelVersion: context.modelVersion,
+        annotationRevision: context.annotationRevision,
+        annotations: context.annotations,
+      }),
+    };
+  }
+
+  private async pushAttachment(
+    binding: RoomBinding,
+    title: string,
+    payload: ReturnType<typeof createAnnotationAttachment>['payload'],
+  ): Promise<void> {
+    if (!this.canPublishTo(binding)) {
+      throw new Error('Canvas room is no longer available.');
+    }
+    try {
+      await this.getSession().rpc.extensions.sendAttachmentsToMessage({
+        instanceId: binding.instanceId,
+        attachments: [
+          {
+            type: 'extension_context',
+            title,
+            payload: annotationPayloadAsJsonValue(payload),
+          },
+        ],
+      });
+    } catch (error) {
+      void this.logBestEffort(`Could not attach Manifold annotation context: ${errorMessage(error)}`, {
+        level: 'warning',
+      });
+      throw error;
+    }
+  }
+
+  private trackFixSend(operation: Promise<void>): void {
+    this.pendingFixSends.add(operation);
+    void operation.then(
+      () => this.pendingFixSends.delete(operation),
+      () => this.pendingFixSends.delete(operation),
     );
   }
 
-  async resolveLiveAnnotationContext(
-    transformedPrompt: string,
-  ): Promise<{ modifiedTransformedPrompt: string } | undefined> {
-    const matched: Array<{ room: RoomBinding; annotation: LiveAnnotationBinding }> = [];
-    for (const binding of this.rooms.values()) {
-      for (const [key, live] of binding.liveAnnotations) {
-        const markerPresent = transformedPrompt.includes(live.token);
-        if (live.state === 'pushed' && !markerPresent) {
-          binding.liveAnnotations.delete(key);
-          continue;
-        }
-        if (markerPresent) {
-          matched.push({ room: binding, annotation: live });
-        }
-      }
+  private async logBestEffort(
+    message: string,
+    options?: { level?: 'info' | 'warning' | 'error'; ephemeral?: boolean },
+  ): Promise<void> {
+    if (!this.session || this.shuttingDown) {
+      return;
     }
-    if (matched.length === 0) {
-      return undefined;
+    try {
+      await this.session.log(message, options);
+    } catch {
+      // SDK logging must not affect action delivery or shutdown.
     }
-
-    await new Promise<void>(resolveDelay => setTimeout(resolveDelay, LIVE_ANNOTATION_SETTLE_MS));
-    const contexts: string[] = [];
-    let resolvedPrompt = transformedPrompt;
-    let removedLiveContext = false;
-    for (const { room: binding, annotation: live } of matched) {
-      if (binding.closed || this.rooms.get(binding.instanceId) !== binding) {
-        continue;
-      }
-      const withoutLiveContext = removeLiveExtensionContext(resolvedPrompt, live.token);
-      removedLiveContext ||= withoutLiveContext !== resolvedPrompt;
-      resolvedPrompt = withoutLiveContext;
-      const snapshot = binding.room.getAnnotations();
-      const annotation = snapshot.items.find(item => item.id === live.annotationId && item.clientId === live.clientId);
-      live.state = 'absent';
-      if (!annotation || annotation.note.trim().length === 0) {
-        binding.liveAnnotations.delete(annotationBindingKey(live.annotationId, live.clientId));
-        continue;
-      }
-      try {
-        const attachment = createAnnotationAttachment({
-          modelVersion: snapshot.modelVersion,
-          annotationRevision: snapshot.revision,
-          annotations: [annotation],
-        });
-        contexts.push(liveAnnotationContextXml(binding.instanceId, live.annotationId, attachment.payload));
-      } catch (error) {
-        contexts.push(
-          liveAnnotationContextXml(binding.instanceId, live.annotationId, {
-            version: 1,
-            source: 'manifold3d-viewer',
-            modelVersion: snapshot.modelVersion,
-            annotationRevision: snapshot.revision,
-            error: `Live annotations could not be serialized: ${errorMessage(error)}`,
-          }),
-        );
-      }
-    }
-    if (contexts.length === 0) {
-      return removedLiveContext ? { modifiedTransformedPrompt: resolvedPrompt.trimEnd() } : undefined;
-    }
-    return {
-      modifiedTransformedPrompt: `${resolvedPrompt.trimEnd()}\n\n${contexts.join('\n\n')}`,
-    };
   }
 
   private canPublishTo(binding: RoomBinding): boolean {
@@ -521,48 +522,55 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-function liveAnnotationContextXml(instanceId: string, annotationId: string, payload: unknown): string {
-  const json = JSON.stringify(payload);
-  return [
-    `<manifold_live_annotation instance_id="${escapeXmlAttribute(instanceId)}" annotation_id="${escapeXmlAttribute(annotationId)}" encoding="json">`,
-    'This snapshot was resolved from the live Viewer when the message was submitted.',
-    'It supersedes the earlier payload for this annotation.',
-    escapeXmlText(json),
-    '</manifold_live_annotation>',
-  ].join('\n');
-}
-
-function annotationBindingKey(annotationId: string, clientId: string | undefined): string {
-  return `${clientId ?? ''}\u0000${annotationId}`;
-}
-
-function annotationAttachmentTitle(partLabel: string): string {
-  return `Manifold annotation · ${partLabel}`.slice(0, 80);
-}
-
-function removeLiveExtensionContext(transformedPrompt: string, liveToken: string): string {
-  return transformedPrompt.replace(/<extension_context\b[^>]*>[\s\S]*?<\/extension_context>/g, block =>
-    block.includes(liveToken) ? '' : block,
-  );
-}
-
-function escapeXmlText(value: string): string {
-  return value.replace(/[&<>]/g, character => {
-    switch (character) {
-      case '&':
-        return '&amp;';
-      case '<':
-        return '&lt;';
-      case '>':
-        return '&gt;';
-      default:
-        return '&gt;';
+function requireExplicitAnnotationCount(
+  context: HostActionHandlerContext,
+  expected: number | undefined,
+  label: string,
+): void {
+  if (!context.annotationIds) {
+    throw new Error(`${label} requires explicit annotationIds.`);
+  }
+  if (expected === undefined) {
+    if (context.annotationIds.length === 0) {
+      throw new Error(`${label} requires at least one annotation.`);
     }
-  });
+    return;
+  }
+  if (context.annotationIds.length !== expected) {
+    throw new Error(`${label} requires exactly ${expected} annotation.`);
+  }
 }
 
-function escapeXmlAttribute(value: string): string {
-  return escapeXmlText(value).replaceAll('"', '&quot;');
+function parseBatchId(input: HostActionHandlerContext['input']): string {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) {
+    throw new Error('Annotation batch input must contain batchId.');
+  }
+  const keys = Object.keys(input);
+  if (keys.length !== 1 || keys[0] !== 'batchId') {
+    throw new Error('Annotation batch input must contain only batchId.');
+  }
+  const batchId = input.batchId;
+  if (
+    typeof batchId !== 'string' ||
+    batchId.length === 0 ||
+    batchId.length > 64 ||
+    !/^[A-Za-z0-9][-A-Za-z0-9._:]*$/.test(batchId)
+  ) {
+    throw new Error('Annotation batch batchId must be a safe identifier no longer than 64 characters.');
+  }
+  return batchId;
+}
+
+function annotationBatchTitle(batchId: string): string {
+  return `Manifold annotation batch · ${batchId}`.slice(0, 80);
+}
+
+function locationSelectionTitle(partLabel: string): string {
+  return `Manifold location · ${partLabel}`.slice(0, 80);
+}
+
+function truncateStatusMessage(message: string): string {
+  return message.slice(0, 512);
 }
 
 type BoundedSettlement<T> =

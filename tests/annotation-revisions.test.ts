@@ -37,7 +37,7 @@ describe('viewer annotation revisions', () => {
         items: [],
       });
 
-      store.add({
+      const annotation = store.addComment({
         kind: 'point',
         anchorWorld: [0, 0, 0],
         worldCoord: [0, 0, 0],
@@ -47,7 +47,12 @@ describe('viewer annotation revisions', () => {
       expect(store.getRevision()).toBe(2);
       uplink.flushNow();
       expect(sent.at(-1)).toMatchObject({ revision: 2, items: [{ note: 'review' }] });
-      store.clear();
+      const wire = (sent.at(-1) as { items: Array<Record<string, unknown>> }).items[0]!;
+      expect(wire).not.toHaveProperty('intent');
+      expect(wire).not.toHaveProperty('state');
+      expect(wire).not.toHaveProperty('batchId');
+      expect(annotation).toMatchObject({ intent: 'comment', state: 'draft' });
+      store.cancelCurrentBatch();
       expect(store.getRevision()).toBe(3);
     } finally {
       uplink.dispose();
@@ -71,8 +76,8 @@ describe('viewer annotation revisions', () => {
       triIds: [],
       note: 'x'.repeat(MAX_ANNOTATION_NOTE_LENGTH + 1),
     };
-    expect(() => store.add(input)).toThrow(/cannot exceed/);
-    const annotation = store.add({ ...input, note: '' });
+    expect(() => store.addComment(input)).toThrow(/cannot exceed/);
+    const annotation = store.addComment({ ...input, note: '' });
     expect(() => store.update(annotation.id, { note: input.note })).toThrow(/cannot exceed/);
     expect(store.get(annotation.id)?.note).toBe('');
   });
@@ -80,10 +85,10 @@ describe('viewer annotation revisions', () => {
   it('reports serialization/flush failures without throwing and recovers on a later flush', () => {
     const store = new AnnotationStore();
     store.setModelVersion('v1');
-    const annotation = store.add({
+    const invalid = store.addComment({
       kind: 'point',
       anchorWorld: [0, 0, 0],
-      worldCoord: [0, 0, 0],
+      worldCoord: [Number.NaN, 0, 0],
       triIds: [],
       note: 'review',
     });
@@ -102,13 +107,19 @@ describe('viewer annotation revisions', () => {
       },
     );
     try {
-      annotation.worldCoord[0] = Number.NaN;
       expect(() => uplink.flushNow()).not.toThrow();
       expect(uplink.hasPendingFlush()).toBe(true);
       expect(errors.at(-1)?.message).toMatch(/finite/);
       expect(sent).toEqual([]);
 
-      annotation.worldCoord[0] = 0;
+      expect(store.remove(invalid.id)).toBe(true);
+      store.addComment({
+        kind: 'point',
+        anchorWorld: [0, 0, 0],
+        worldCoord: [0, 0, 0],
+        triIds: [],
+        note: 'recovered',
+      });
       expect(uplink.flushNow()).toBe(true);
       expect(uplink.hasPendingFlush()).toBe(false);
       expect(successes).toHaveBeenCalledTimes(1);

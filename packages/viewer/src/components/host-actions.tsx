@@ -133,53 +133,9 @@ export function ExportMenuHostActions() {
   );
 }
 
-export function AnnotationFooterHostActions() {
-  const view = useHostActionsView();
-  const actions = view.snapshot.actions.filter(action => action.slot === 'annotation-footer');
-  if (actions.length === 0) {
-    return null;
-  }
-  return (
-    <footer className="flex flex-col gap-2 border-t border-border/50 p-3" aria-label="Annotation host actions">
-      {actions.map(action => {
-        const status = getLatestHostActionStatus(view.snapshot, action.id);
-        const pending = view.pending(action);
-        const disabledReason = view.disabledReason(action);
-        const Icon = pending ? LoaderCircle : status?.state === 'failed' ? CircleAlert : ICONS[action.icon];
-        return (
-          <div key={action.id} className="flex flex-col gap-1">
-            <Button
-              variant={buttonVariant(action.tone)}
-              size="sm"
-              className="w-full justify-start"
-              disabled={disabledReason !== undefined}
-              aria-busy={pending}
-              title={disabledReason}
-              onClick={() => view.invoke(action)}
-            >
-              <Icon className={cn(pending && 'animate-spin')} aria-hidden="true" />
-              {action.label}
-            </Button>
-            {(disabledReason || status?.message) && (
-              <p
-                role={status?.state === 'failed' ? 'alert' : 'status'}
-                className={cn(
-                  'px-1 text-[10px] text-muted-foreground',
-                  status?.state === 'failed' && 'text-destructive',
-                )}
-              >
-                {disabledReason ?? status?.message}
-              </p>
-            )}
-          </div>
-        );
-      })}
-    </footer>
-  );
-}
-
 export function HostActionStatusRegion() {
   const { snapshot } = useHostActionsView();
+  const markMode = useViewerState(state => state.markMode);
   const status = snapshot.latestStatus;
   if (!status) {
     return null;
@@ -201,7 +157,8 @@ export function HostActionStatusRegion() {
       aria-live={status.state === 'failed' ? 'assertive' : 'polite'}
       className={cn(
         glass,
-        'pointer-events-none fixed bottom-4 left-1/2 z-40 max-w-md -translate-x-1/2 px-3 py-2 text-xs',
+        'pointer-events-none fixed left-1/2 z-40 max-w-md -translate-x-1/2 px-3 py-2 text-xs',
+        markMode === 'annotate' ? 'bottom-20' : 'bottom-4',
         status.state === 'failed' && 'text-destructive',
       )}
     >
@@ -210,16 +167,21 @@ export function HostActionStatusRegion() {
   );
 }
 
+export function useHostActionsSnapshot(): HostActionsSnapshot {
+  const client = useViewerState(state => state.hostActionsClient);
+  return useSyncExternalStore(
+    client?.subscribe ?? subscribeNoop,
+    client?.getSnapshot ?? getEmptySnapshot,
+    getEmptySnapshot,
+  );
+}
+
 function useHostActionsView() {
   const client = useViewerState(state => state.hostActionsClient);
   const payload = useViewerState(state => state.payload);
   const marksRuntime = useViewerState(state => state.marksRuntime);
   const annotations = useAnnotations(marksRuntime?.store ?? null);
-  const snapshot = useSyncExternalStore(
-    client?.subscribe ?? subscribeNoop,
-    client?.getSnapshot ?? getEmptySnapshot,
-    getEmptySnapshot,
-  );
+  const snapshot = useHostActionsSnapshot();
 
   return {
     snapshot,

@@ -5,8 +5,9 @@ import type { Annotation } from './types.js';
 
 /**
  * Renders 3D markers for annotations:
- *  - point: a small red sphere at the world coordinate
- *  - region: a yellow translucent overlay of the selected triangles
+ *  - draft comments: bright red/yellow
+ *  - pending selections: cyan
+ *  - committed annotations: subdued variants of their intent color
  *
  * Markers always render on top of the model (depthTest off) so users
  * never lose track of where they marked, even when rotating the camera
@@ -43,7 +44,7 @@ export class MarkerRenderer {
     this.requestRender();
   }
 
-  private sync(items: Annotation[]): void {
+  private sync(items: readonly Annotation[]): void {
     const aliveIds = new Set(items.map(a => a.id));
     for (const [id, obj] of this.perAnnotation) {
       if (!aliveIds.has(id)) {
@@ -53,28 +54,36 @@ export class MarkerRenderer {
       }
     }
     for (const ann of items) {
-      if (this.perAnnotation.has(ann.id)) {
+      const existing = this.perAnnotation.get(ann.id);
+      const visualKey = `${ann.intent}:${ann.state}`;
+      if (existing?.userData.annotationVisualKey === visualKey) {
         continue;
+      }
+      if (existing) {
+        this.group.remove(existing);
+        this.disposeObject(existing);
       }
       const obj = ann.kind === 'point' ? this.makePointMarker(ann) : this.makeRegionMarker(ann);
       if (obj) {
+        obj.userData.annotationVisualKey = visualKey;
         this.perAnnotation.set(ann.id, obj);
         this.group.add(obj);
+      } else {
+        this.perAnnotation.delete(ann.id);
       }
     }
     this.requestRender();
   }
 
   private makePointMarker(ann: Annotation): THREE.Object3D {
-    // Bright red sphere; small enough not to obscure detail. Size is in
-    // world units (mm); we'll let the user re-mark if scale is wrong.
+    const style = markerStyle(ann);
     const geom = new THREE.SphereGeometry(0.6, 16, 12);
     const mat = new THREE.MeshBasicMaterial({
-      color: 0xff3030,
+      color: style.color,
       depthTest: false,
       depthWrite: false,
       transparent: true,
-      opacity: 0.95,
+      opacity: style.pointOpacity,
     });
     const sphere = new THREE.Mesh(geom, mat);
     sphere.position.fromArray(ann.anchorWorld);
@@ -84,6 +93,7 @@ export class MarkerRenderer {
   }
 
   private makeRegionMarker(ann: Annotation): THREE.Object3D | null {
+    const style = markerStyle(ann);
     const mesh = this.getMesh();
     if (!mesh) {
       return null;
@@ -110,9 +120,9 @@ export class MarkerRenderer {
     geom.setAttribute('position', new THREE.BufferAttribute(positions, 3));
     geom.computeVertexNormals();
     const mat = new THREE.MeshBasicMaterial({
-      color: 0xffd23f,
+      color: style.color,
       transparent: true,
-      opacity: 0.55,
+      opacity: style.regionOpacity,
       depthTest: false,
       depthWrite: false,
       side: THREE.DoubleSide,
@@ -141,4 +151,21 @@ export class MarkerRenderer {
       }
     });
   }
+}
+
+function markerStyle(ann: Annotation): { color: number; pointOpacity: number; regionOpacity: number } {
+  if (ann.intent === 'selection') {
+    return ann.state === 'pending'
+      ? { color: 0x22d3ee, pointOpacity: 0.95, regionOpacity: 0.48 }
+      : { color: 0x3b82f6, pointOpacity: 0.52, regionOpacity: 0.24 };
+  }
+  if (ann.state === 'pending') {
+    return { color: 0xf59e0b, pointOpacity: 0.65, regionOpacity: 0.3 };
+  }
+  if (ann.state === 'committed') {
+    return { color: 0x94a3b8, pointOpacity: 0.42, regionOpacity: 0.2 };
+  }
+  return ann.kind === 'point'
+    ? { color: 0xff3030, pointOpacity: 0.95, regionOpacity: 0.55 }
+    : { color: 0xffd23f, pointOpacity: 0.95, regionOpacity: 0.55 };
 }

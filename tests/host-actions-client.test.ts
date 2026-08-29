@@ -93,6 +93,61 @@ describe('HostActionsClient', () => {
     }
   });
 
+  it('waits for the terminal status of the exact invoked request', async () => {
+    const client = new HostActionsClient({
+      send: () => undefined,
+      isOpen: () => true,
+      flushAnnotations: () => true,
+      getInvocationContext: () => ({ modelVersion: 'v1', annotationRevision: 0 }),
+      createRequestId: () => 'wait-request',
+    });
+    client.receiveManifest(createHostActionsManifest([action]));
+
+    const terminal = client.invokeAndWait(action.id);
+    client.receiveStatus(
+      createHostActionStatus({
+        requestId: 'other-request',
+        actionId: action.id,
+        state: 'succeeded',
+      }),
+    );
+    let settled = false;
+    void terminal.then(() => {
+      settled = true;
+    });
+    await Promise.resolve();
+    expect(settled).toBe(false);
+
+    const expected = createHostActionStatus({
+      requestId: 'wait-request',
+      actionId: action.id,
+      state: 'succeeded',
+    });
+    client.receiveStatus(expected);
+    await expect(terminal).resolves.toEqual(expected);
+  });
+
+  it('returns immediate local failures and rejects pending waits on disposal', async () => {
+    const localFailure = new HostActionsClient({
+      send: () => undefined,
+      isOpen: () => true,
+      flushAnnotations: () => false,
+      getInvocationContext: () => ({ modelVersion: 'v1', annotationRevision: 0 }),
+      createRequestId: () => 'local-failure',
+    });
+    localFailure.receiveManifest(createHostActionsManifest([action]));
+    await expect(localFailure.invokeAndWait(action.id)).resolves.toMatchObject({
+      requestId: 'local-failure',
+      state: 'failed',
+    });
+
+    const pending = createClient();
+    pending.receiveManifest(createHostActionsManifest([action]));
+    const wait = pending.invokeAndWait(action.id);
+    pending.dispose();
+    await expect(wait).rejects.toThrow(/disposed/);
+  });
+
   it('tracks concurrent requests for one action and derives pending/latest state', () => {
     const client = createClient();
     client.receiveManifest(createHostActionsManifest([action]));
@@ -161,6 +216,23 @@ describe('HostActionsClient', () => {
     });
     expect(client.getSnapshot().statuses).toEqual({});
     expect(client.getSnapshot().latestStatus).toBeNull();
+  });
+
+  it('rejects terminal waiters when reconnect cannot resume the client identity', async () => {
+    const client = new HostActionsClient({
+      send: () => undefined,
+      isOpen: () => true,
+      flushAnnotations: () => true,
+      getInvocationContext: () => ({ modelVersion: 'v1', annotationRevision: 0 }),
+      createRequestId: () => 'identity-request',
+    });
+    client.receiveHello({ kind: 'hello', protocolVersion: 1, clientId: 'client-1' });
+    client.receiveManifest(createHostActionsManifest([action]));
+    const terminal = client.invokeAndWait(action.id);
+
+    client.receiveHello({ kind: 'hello', protocolVersion: 1, clientId: 'client-2' });
+
+    await expect(terminal).rejects.toThrow(/identity changed/);
   });
 
   it('surfaces invocation construction and flush errors as failed status instead of throwing', () => {

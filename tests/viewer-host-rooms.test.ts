@@ -172,60 +172,6 @@ describe('Viewer Host rooms', () => {
     }
   });
 
-  it('publishes accepted annotation commits with only changed item ids', async () => {
-    const room = host.createRoom();
-    room.pushModel(syntheticModel('annotation commits'));
-    const commits: Array<{
-      revision: number;
-      changedAnnotationIds: string[];
-      items: WireAnnotation[];
-    }> = [];
-    const unsubscribe = room.subscribeAnnotationCommits(commit => {
-      commits.push(commit);
-    });
-    const client = await openRoom(room);
-    try {
-      const version = room.getAnnotations().modelVersion;
-      client.socket.send(
-        JSON.stringify(
-          createAnnotationsMessage(version, 1, [
-            annotation('saved', version, ''),
-            annotation('unchanged', version, 'keep'),
-          ]),
-        ),
-      );
-      await eventually(() => commits.length === 1);
-      expect(commits[0]).toMatchObject({
-        revision: 1,
-        changedAnnotationIds: ['saved', 'unchanged'],
-      });
-
-      client.socket.send(
-        JSON.stringify(
-          createAnnotationsMessage(version, 2, [
-            annotation('saved', version, 'latest note'),
-            annotation('unchanged', version, 'keep'),
-          ]),
-        ),
-      );
-      await eventually(() => commits.length === 2);
-      expect(commits[1]).toMatchObject({
-        revision: 2,
-        changedAnnotationIds: ['saved'],
-        items: expect.arrayContaining([expect.objectContaining({ id: 'saved', note: 'latest note' })]),
-      });
-
-      unsubscribe();
-      client.socket.send(
-        JSON.stringify(createAnnotationsMessage(version, 3, [annotation('saved', version, 'after unsubscribe')])),
-      );
-      await eventually(() => room.getAnnotations().revision === 3);
-      expect(commits).toHaveLength(2);
-    } finally {
-      client.socket.terminate();
-    }
-  });
-
   it('replays the current model and empty action manifest to a newly connected room client', async () => {
     const room = host.createRoom();
     room.pushModel(syntheticModel('replayed'));
@@ -402,9 +348,13 @@ describe('Viewer Host rooms', () => {
 
   it('executes request IDs once, resolves annotations from the committed snapshot, and replays status', async () => {
     const room = host.createRoom();
-    const contexts: Array<{ annotations: readonly WireAnnotation[]; input: unknown }> = [];
+    const contexts: Array<{
+      annotationIds: readonly string[] | undefined;
+      annotations: readonly WireAnnotation[];
+      input: unknown;
+    }> = [];
     const handler = vi.fn(context => {
-      contexts.push({ annotations: context.annotations, input: context.input });
+      contexts.push({ annotationIds: context.annotationIds, annotations: context.annotations, input: context.input });
       return { status: 'succeeded' as const, message: 'done' };
     });
     room.registerAction(
@@ -453,6 +403,7 @@ describe('Viewer Host rooms', () => {
       );
 
       expect(handler).toHaveBeenCalledTimes(1);
+      expect(contexts[0]?.annotationIds).toEqual(['trusted']);
       expect(contexts[0]?.annotations).toMatchObject([{ id: 'trusted', note: 'real note' }]);
       expect(contexts[0]?.input).toEqual({ annotation: { id: 'trusted', note: 'fake note' } });
     } finally {

@@ -15,16 +15,22 @@ import type { PreviewPayload } from './types.js';
 export interface MarksRuntime {
   store: AnnotationStore;
   flyouts: FlyoutLayer;
-  removeAnnotation(id: string): void;
+  commitOpenDraft(): void;
+  getDraftBatch(): { batchId: string; annotationIds: readonly string[] };
+  sealBatch(batchId: string): boolean;
+  restoreBatch(batchId: string): boolean;
+  freezeBatch(batchId: string): void;
+  cancelBatch(batchId: string): void;
+  commitSelection(id: string): void;
+  removeSelection(id: string): void;
+  flushAnnotations(): boolean;
 }
 
 /**
- * Interaction mode for the left tool rail. 'orbit' is the default
- * camera mode (marks still reachable via Ctrl gestures); 'point' and
- * 'region' arm the corresponding annotation gesture on plain left
- * click / drag.
+ * Interaction mode for the Viewer rail. Annotate collects a comment batch;
+ * select emits one location-only host attachment per completed gesture.
  */
-export type MarkMode = 'orbit' | 'point' | 'region';
+export type MarkMode = 'orbit' | 'annotate' | 'select';
 
 export interface ViewerApi {
   setRenderMode(mode: RenderMode): void;

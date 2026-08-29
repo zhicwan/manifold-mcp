@@ -112,13 +112,6 @@ export interface ViewerAnnotationSnapshot {
   items: WireAnnotation[];
 }
 
-export interface ViewerAnnotationCommit extends ViewerAnnotationSnapshot {
-  /** Annotation ids whose serialized content changed in this accepted snapshot. */
-  changedAnnotationIds: string[];
-}
-
-export type ViewerAnnotationCommitListener = (commit: ViewerAnnotationCommit) => void | Promise<void>;
-
 export interface HostActionPublisher {
   running(message?: string): void;
   succeeded(message?: string): void;
@@ -130,6 +123,8 @@ export interface HostActionHandlerContext {
   actionId: string;
   modelVersion: string;
   annotationRevision: number;
+  /** Present only when the invocation explicitly selected annotation ids. */
+  annotationIds?: readonly string[];
   annotations: readonly WireAnnotation[];
   input?: JsonValue;
   publish: HostActionPublisher;
@@ -427,7 +422,6 @@ export class ViewerRoom {
   private readonly clientsById = new Map<string, RoomClientState>();
   private readonly clientsByResumeToken = new Map<string, RoomClientState>();
   private readonly actions = new Map<string, RegisteredAction>();
-  private readonly annotationCommitListeners = new Set<ViewerAnnotationCommitListener>();
   private lastModel: ViewerModelFrame | undefined;
   private modelVersion = 'none';
   private modelSequence = 0;
@@ -499,14 +493,6 @@ export class ViewerRoom {
       modelVersion: this.modelVersion,
       revision,
       items,
-    };
-  }
-
-  subscribeAnnotationCommits(listener: ViewerAnnotationCommitListener): () => void {
-    this.ensureOpen();
-    this.annotationCommitListeners.add(listener);
-    return () => {
-      this.annotationCommitListeners.delete(listener);
     };
   }
 
@@ -628,7 +614,6 @@ export class ViewerRoom {
     }
     this.closed = true;
     this.actions.clear();
-    this.annotationCommitListeners.clear();
     for (const client of this.clientsById.values()) {
       if (client.evictionTimer) {
         clearTimeout(client.evictionTimer);
@@ -718,14 +703,9 @@ export class ViewerRoom {
       return;
     }
     const items = new Map<string, WireAnnotation>();
-    const changedAnnotationIds: string[] = [];
     for (const annotation of message.items) {
       const next = { ...cloneAnnotation(annotation), clientId: client.id };
       items.set(annotation.id, next);
-      const previous = snapshot?.items.get(annotation.id);
-      if (!previous || annotationFingerprint(previous) !== annotationFingerprint(next)) {
-        changedAnnotationIds.push(annotation.id);
-      }
     }
     client.snapshot = {
       modelVersion: message.modelVersion,
@@ -733,25 +713,6 @@ export class ViewerRoom {
       items,
       fingerprint,
     };
-    if (changedAnnotationIds.length > 0) {
-      this.notifyAnnotationCommit({
-        protocolVersion: ANNOTATIONS_PROTOCOL_VERSION,
-        modelVersion: message.modelVersion,
-        revision,
-        items: [...items.values()].map(cloneAnnotation),
-        changedAnnotationIds,
-      });
-    }
-  }
-
-  private notifyAnnotationCommit(commit: ViewerAnnotationCommit): void {
-    for (const listener of this.annotationCommitListeners) {
-      void Promise.resolve()
-        .then(() => listener(structuredClone(commit)))
-        .catch(error => {
-          this.logger.warn(`[viewer-host] annotation commit listener failed: ${truncateMessage(errorMessage(error))}`);
-        });
-    }
   }
 
   private invokeAction(client: RoomClientState, invocation: HostActionInvocationMessage): void {
@@ -836,6 +797,7 @@ export class ViewerRoom {
       actionId: invocation.actionId,
       modelVersion: invocation.modelVersion,
       annotationRevision: invocation.annotationRevision,
+      ...(invocation.annotationIds !== undefined ? { annotationIds: [...invocation.annotationIds] } : {}),
       annotations,
       ...(invocation.input !== undefined ? { input: structuredClone(invocation.input) } : {}),
       publish,
@@ -1074,11 +1036,6 @@ function sendModel(socket: WebSocket, model: ViewerModelFrame): void {
 
 function cloneAnnotation(annotation: WireAnnotation): WireAnnotation {
   return structuredClone(annotation);
-}
-
-function annotationFingerprint(annotation: WireAnnotation): string {
-  const { clientId: _clientId, ...content } = annotation;
-  return JSON.stringify(content);
 }
 
 function isTerminal(state: HostActionStatusMessage['state']): boolean {

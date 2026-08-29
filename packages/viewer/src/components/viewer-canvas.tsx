@@ -99,6 +99,7 @@ async function startViewerGeneration(
     const sceneRuntime = viewer.getSceneRuntime();
     let lastPayload: PreviewPayload | null = null;
     let flushSavedAnnotation = (): void => undefined;
+    let attachSelection = (_id: string): void => undefined;
 
     const marks = installMarks({
       scene: sceneRuntime.scene,
@@ -110,6 +111,7 @@ async function startViewerGeneration(
       requestRender: sceneRuntime.requestRender,
       onModeChange: mode => viewerStore.setMarkMode(mode),
       onAnnotationCommit: () => flushSavedAnnotation(),
+      onSelectionCreated: id => attachSelection(id),
     });
     partialCleanup.push(() => marks.dispose());
     const removeMarksFrameHook = sceneRuntime.addAnimationFrameHook(() => marks.frame());
@@ -158,6 +160,29 @@ async function startViewerGeneration(
         annotationRevision: marks.store.getRevision(),
       }),
     });
+    attachSelection = id => {
+      void hostActions
+        .invokeAndWait('attach-location-selection', { annotationIds: [id] })
+        .then(status => {
+          if (!mounted) {
+            return;
+          }
+          if (status.state === 'succeeded') {
+            marks.store.commitSelection(id);
+          } else {
+            marks.store.removeSelection(id);
+          }
+          uplink.flushNow();
+        })
+        .catch(error => {
+          if (!mounted) {
+            return;
+          }
+          marks.store.removeSelection(id);
+          uplink.flushNow();
+          viewerStore.setAnnotationSyncError(`Location attachment failed: ${errorMessage(error)}`);
+        });
+    };
     partialCleanup.push(() => hostActions.dispose());
     viewerStore.setHostActionsClient(hostActions);
     partialCleanup.push(() => viewerStore.setHostActionsClient(null));
@@ -234,9 +259,32 @@ async function startViewerGeneration(
     viewerStore.setMarksRuntime({
       store: marks.store,
       flyouts: marks.flyouts,
-      removeAnnotation(id): void {
-        marks.store.remove(id);
-        uplink.flushNow();
+      commitOpenDraft(): void {
+        marks.flyouts.dismissAll();
+      },
+      getDraftBatch() {
+        return marks.store.getDraftBatch();
+      },
+      sealBatch(batchId): boolean {
+        return marks.store.sealBatch(batchId) !== undefined;
+      },
+      restoreBatch(batchId): boolean {
+        return marks.store.restoreBatch(batchId) !== undefined;
+      },
+      freezeBatch(batchId): void {
+        marks.store.freezeBatch(batchId);
+      },
+      cancelBatch(batchId): void {
+        marks.store.cancelBatch(batchId);
+      },
+      commitSelection(id): void {
+        marks.store.commitSelection(id);
+      },
+      removeSelection(id): void {
+        marks.store.removeSelection(id);
+      },
+      flushAnnotations(): boolean {
+        return uplink.flushNow();
       },
     });
     partialCleanup.push(() => viewerStore.setMarksRuntime(null));
@@ -367,4 +415,8 @@ function download(blob: Blob, name: string): void {
     URL.revokeObjectURL(url);
     a.remove();
   }, 0);
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }

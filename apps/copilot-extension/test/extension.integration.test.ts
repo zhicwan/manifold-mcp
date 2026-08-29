@@ -18,7 +18,16 @@ import { Runner, type RunnerOptions } from '@manifold3d/modeling/runner/host.js'
 import type { RunRequest, RunResult } from '@manifold3d/modeling/runner/protocol.js';
 import { emptyReport } from '@manifold3d/modeling/validation/report.js';
 import { createAnnotationsMessage, type WireAnnotation } from '@manifold3d/protocol/wire/annotations.js';
-import { MANIFOLD_CANVAS_ID, startCopilotExtension, type CopilotExtensionApplication } from '../src/composition.js';
+import { createHostActionInvocation } from '@manifold3d/protocol/wire/host-actions.js';
+import {
+  ATTACH_ANNOTATION_BATCH_ACTION_ID,
+  ATTACH_LOCATION_SELECTION_ACTION_ID,
+  FIX_ANNOTATION_BATCH_ACTION_ID,
+  FIX_ANNOTATION_BATCH_PROMPT,
+  MANIFOLD_CANVAS_ID,
+  startCopilotExtension,
+  type CopilotExtensionApplication,
+} from '../src/composition.js';
 import type { CopilotExtensionSession, CopilotSdkBoundary, ExtensionToolResult } from '../src/sdk-boundary.js';
 import { installExtensionSignalHandlers, type ExtensionSignalRuntime } from '../src/signal-handlers.js';
 
@@ -38,11 +47,12 @@ describe('production Copilot Extension composition', () => {
     await rm(testWorkspace, { force: true, recursive: true });
   });
 
-  it('reuses Canvas instances, isolates rooms, and resolves one live pill to the latest saved snapshot', async () => {
+  it('registers transactional actions and pushes one static pill per batch or location selection', async () => {
     const harness = createHarness();
     application = await startCopilotExtension(harness.startOptions);
     const canvas = harness.canvas();
     expect(canvas.id).toBe(MANIFOLD_CANVAS_ID);
+    expect(harness.joinConfig()?.hooks?.onUserPromptTransformed).toBeUndefined();
 
     const firstOpen = await canvas.open(openContext('canvas-a'));
     const reopened = await canvas.open(openContext('canvas-a'));
@@ -52,14 +62,13 @@ describe('production Copilot Extension composition', () => {
     const clientA = await openRoom(requiredUrl(firstOpen.url));
     try {
       const execute = harness.tool('manifold_execute_script');
-      const firstExecution = await execute.handler?.(
-        { code: 'result = Manifold.cube(1);', description: 'first' },
-        invocation('manifold_execute_script'),
-      );
-      expect(firstExecution).toMatchObject({ resultType: 'success' });
-      const firstMeshA = await clientA.messages.waitFor(message => message.kind === 'mesh');
-      expect(firstMeshA.description).toBe('first');
-      expect(harness.modelingSession.getCurrentModel()?.revision).toBe(1);
+      expect(
+        await execute.handler?.(
+          { code: 'result = Manifold.cube(1);', description: 'first' },
+          invocation('manifold_execute_script'),
+        ),
+      ).toMatchObject({ resultType: 'success' });
+      expect((await clientA.messages.waitFor(message => message.kind === 'mesh')).description).toBe('first');
 
       const secondOpen = await canvas.open(openContext('canvas-b'));
       expect(secondOpen.url).not.toBe(firstOpen.url);
@@ -69,6 +78,21 @@ describe('production Copilot Extension composition', () => {
         expect(await clientB.messages.waitFor(message => message.kind === 'mesh')).toMatchObject({
           description: 'first',
         });
+        const actionManifest = await clientA.messages.waitFor(message => message.kind === 'host_actions_manifest');
+        expect(actionManifest.actions).toEqual([
+          expect.objectContaining({
+            id: ATTACH_ANNOTATION_BATCH_ACTION_ID,
+            slot: 'annotation-batch',
+          }),
+          expect.objectContaining({
+            id: FIX_ANNOTATION_BATCH_ACTION_ID,
+            slot: 'annotation-batch',
+          }),
+          expect.objectContaining({
+            id: ATTACH_LOCATION_SELECTION_ACTION_ID,
+            slot: 'selection-gesture',
+          }),
+        ]);
 
         const versionA = requiredString(
           (
@@ -78,168 +102,129 @@ describe('production Copilot Extension composition', () => {
           ).modelVersion,
         );
         const versionB = requiredString(
-          (await clientB.messages.waitFor(message => message.kind === 'model_version')).modelVersion,
+          (
+            await clientB.messages.waitFor(
+              message => message.kind === 'model_version' && message.modelVersion !== 'none',
+            )
+          ).modelVersion,
         );
         expect(versionA).not.toBe(versionB);
         clientA.socket.send(
-          JSON.stringify(createAnnotationsMessage(versionA, 1, [pointAnnotation('annotation-a', versionA, '')])),
-        );
-        clientA.socket.send(
           JSON.stringify(
-            createAnnotationsMessage(versionA, 2, [
-              pointAnnotation('annotation-a', versionA, 'room A first draft', 'client-transport-a'),
+            createAnnotationsMessage(versionA, 4, [
+              pointAnnotation('annotation-a', versionA, 'move this point'),
+              regionAnnotation('annotation-region', versionA, 'round this region'),
+              pointAnnotation('location-a', versionA, ''),
             ]),
           ),
         );
-        await eventually(() => harness.sendAttachments.mock.calls.length === 1);
+        clientB.socket.send(
+          JSON.stringify(
+            createAnnotationsMessage(versionB, 2, [pointAnnotation('annotation-b', versionB, 'room B note')]),
+          ),
+        );
+        await new Promise<void>(resolvePromise => setTimeout(resolvePromise, 25));
+        expect(harness.sendAttachments).not.toHaveBeenCalled();
+
+        await invokeAction(clientA, {
+          requestId: 'attach-batch-a',
+          actionId: ATTACH_ANNOTATION_BATCH_ACTION_ID,
+          modelVersion: versionA,
+          annotationRevision: 4,
+          annotationIds: ['annotation-a', 'annotation-region'],
+          input: { batchId: 'batch-a' },
+        });
         expect(harness.sendAttachments).toHaveBeenCalledTimes(1);
-        expect(harness.sendAttachments).toHaveBeenCalledWith({
+        expect(harness.sendAttachments).toHaveBeenLastCalledWith({
           instanceId: 'canvas-a',
           attachments: [
             {
               type: 'extension_context',
-              title: 'Manifold annotation · point#1',
+              title: 'Manifold annotation batch · batch-a',
               payload: {
-                mode: 'live',
-                liveToken: expect.any(String),
-                snapshot: {
-                  version: 1,
-                  source: 'manifold3d-viewer',
-                  modelVersion: versionA,
-                  annotationRevision: 2,
-                  annotations: [
-                    {
-                      id: 'annotation-a',
-                      partLabel: 'point#1',
-                      note: 'room A first draft',
-                      selection: {
-                        kind: 'point',
-                        worldCoord: [1, 2, 3],
-                      },
-                    },
-                  ],
-                },
+                version: 2,
+                source: 'manifold3d-viewer',
+                mode: 'annotation-batch',
+                batchId: 'batch-a',
+                modelVersion: versionA,
+                annotationRevision: 4,
+                annotations: [
+                  {
+                    id: 'annotation-a',
+                    partLabel: 'point#1',
+                    note: 'move this point',
+                    selection: { kind: 'point', worldCoord: [1, 2, 3] },
+                  },
+                  {
+                    id: 'annotation-region',
+                    partLabel: 'region#1',
+                    note: 'round this region',
+                    selection: { kind: 'region', worldCoord: [4, 5, 6], triangleCount: 12 },
+                  },
+                ],
               },
             },
           ],
         });
-        const token = harness.sendAttachments.mock.calls[0]?.[0].attachments[0]?.payload;
-        if (!token || typeof token !== 'object' || Array.isArray(token) || typeof token.liveToken !== 'string') {
-          throw new Error('Expected a live annotation token.');
-        }
 
-        clientA.socket.send(
-          JSON.stringify(
-            createAnnotationsMessage(versionA, 3, [
-              pointAnnotation('annotation-a', versionA, 'room A first draft', 'client-transport-a'),
-              pointAnnotation('annotation-a2', versionA, 'room A second note', 'client-transport-a'),
-            ]),
-          ),
-        );
-        await eventually(() => harness.sendAttachments.mock.calls.length === 2);
-        const secondToken = harness.sendAttachments.mock.calls[1]?.[0].attachments[0]?.payload;
-        if (
-          !secondToken ||
-          typeof secondToken !== 'object' ||
-          Array.isArray(secondToken) ||
-          typeof secondToken.liveToken !== 'string'
-        ) {
-          throw new Error('Expected a second live annotation token.');
-        }
-
-        clientA.socket.send(
-          JSON.stringify(
-            createAnnotationsMessage(versionA, 4, [
-              pointAnnotation('annotation-a', versionA, 'room A final note', 'client-transport-a'),
-              pointAnnotation('annotation-a2', versionA, 'room A second note', 'client-transport-a'),
-            ]),
-          ),
-        );
-        const transformedPrompt = [
-          `<extension_context>${JSON.stringify(token)}</extension_context>`,
-          `<extension_context>${JSON.stringify(secondToken)}</extension_context>`,
-        ].join('\n');
-        const transformed = await harness.transformPrompt(transformedPrompt);
+        await invokeAction(clientA, {
+          requestId: 'attach-location-a',
+          actionId: ATTACH_LOCATION_SELECTION_ACTION_ID,
+          modelVersion: versionA,
+          annotationRevision: 4,
+          annotationIds: ['location-a'],
+        });
         expect(harness.sendAttachments).toHaveBeenCalledTimes(2);
-        expect(transformed?.modifiedTransformedPrompt).toContain('room A final note');
-        expect(transformed?.modifiedTransformedPrompt).toContain('room A second note');
-        expect(transformed?.modifiedTransformedPrompt).toContain('"annotationRevision":4');
-        expect(transformed?.modifiedTransformedPrompt).not.toContain('room A first draft');
+        expect(harness.sendAttachments).toHaveBeenLastCalledWith({
+          instanceId: 'canvas-a',
+          attachments: [
+            {
+              type: 'extension_context',
+              title: 'Manifold location · point#1',
+              payload: {
+                version: 2,
+                source: 'manifold3d-viewer',
+                mode: 'location-selection',
+                modelVersion: versionA,
+                annotationRevision: 4,
+                annotations: [
+                  {
+                    id: 'location-a',
+                    partLabel: 'point#1',
+                    selection: { kind: 'point', worldCoord: [1, 2, 3] },
+                  },
+                ],
+              },
+            },
+          ],
+        });
 
-        clientA.socket.send(
-          JSON.stringify(
-            createAnnotationsMessage(versionA, 5, [
-              pointAnnotation('annotation-a', versionA, 'delete before send', 'client-transport-a'),
-              pointAnnotation('annotation-a2', versionA, 'room A second note', 'client-transport-a'),
-            ]),
-          ),
-        );
-        await eventually(() => harness.sendAttachments.mock.calls.length === 3);
-        const deletedToken = harness.sendAttachments.mock.calls[2]?.[0].attachments[0]?.payload;
-        clientA.socket.send(
-          JSON.stringify(
-            createAnnotationsMessage(versionA, 6, [
-              pointAnnotation('annotation-a2', versionA, 'room A second note', 'client-transport-a'),
-            ]),
-          ),
-        );
-        const afterDeletion = await harness.transformPrompt(
-          `<extension_context>${JSON.stringify(deletedToken)}</extension_context>`,
-        );
-        expect(afterDeletion?.modifiedTransformedPrompt).not.toContain('delete before send');
-        expect(afterDeletion?.modifiedTransformedPrompt).not.toContain('<extension_context>');
-
-        clientB.socket.send(
-          JSON.stringify(
-            createAnnotationsMessage(versionB, 4, [
-              pointAnnotation('annotation-b', versionB, 'room B note', 'client-transport-b'),
-            ]),
-          ),
-        );
-        await eventually(() => harness.sendAttachments.mock.calls.length === 4);
-        const removedToken = harness.sendAttachments.mock.calls[3]?.[0].attachments[0]?.payload;
-        if (
-          !removedToken ||
-          typeof removedToken !== 'object' ||
-          Array.isArray(removedToken) ||
-          typeof removedToken.liveToken !== 'string'
-        ) {
-          throw new Error('Expected a removable live annotation token.');
-        }
-        const withoutLivePill = await harness.transformPrompt('ordinary user prompt');
-        expect(withoutLivePill).toBeUndefined();
-
-        clientB.socket.send(
-          JSON.stringify(
-            createAnnotationsMessage(versionB, 5, [
-              pointAnnotation('annotation-b', versionB, 'room B edited note', 'client-transport-b'),
-            ]),
-          ),
-        );
-        await eventually(() => harness.sendAttachments.mock.calls.length === 5);
-        const replacementToken = harness.sendAttachments.mock.calls[4]?.[0].attachments[0]?.payload;
-        if (
-          !replacementToken ||
-          typeof replacementToken !== 'object' ||
-          Array.isArray(replacementToken) ||
-          typeof replacementToken.liveToken !== 'string'
-        ) {
-          throw new Error('Expected a replacement live annotation token.');
-        }
-        expect(replacementToken.liveToken).not.toBe(removedToken.liveToken);
+        await invokeAction(clientB, {
+          requestId: 'attach-batch-b',
+          actionId: ATTACH_ANNOTATION_BATCH_ACTION_ID,
+          modelVersion: versionB,
+          annotationRevision: 2,
+          annotationIds: ['annotation-b'],
+          input: { batchId: 'batch-b' },
+        });
+        expect(harness.sendAttachments).toHaveBeenCalledTimes(3);
+        expect(harness.sendAttachments.mock.calls[2]?.[0]).toMatchObject({
+          instanceId: 'canvas-b',
+          attachments: [
+            {
+              payload: {
+                batchId: 'batch-b',
+                modelVersion: versionB,
+                annotations: [{ id: 'annotation-b', note: 'room B note' }],
+              },
+            },
+          ],
+        });
 
         await canvas.onClose?.(closeContext('canvas-a'));
         expect(application.liveRoomCount).toBe(1);
         expect((await fetch(requiredUrl(firstOpen.url))).status).toBe(404);
         expect((await fetch(requiredUrl(secondOpen.url))).status).toBe(200);
-
-        const secondExecution = await execute.handler?.(
-          { code: 'result = Manifold.cube(2);', description: 'second' },
-          invocation('manifold_execute_script'),
-        );
-        expect(secondExecution).toMatchObject({ resultType: 'success' });
-        await clientB.messages.waitFor(message => message.kind === 'mesh' && message.description === 'second');
-        expect(harness.modelingSession.getCurrentModel()?.revision).toBe(2);
       } finally {
         clientB.socket.terminate();
       }
@@ -248,23 +233,102 @@ describe('production Copilot Extension composition', () => {
     }
   });
 
-  it('keeps the annotation attachment queue usable when warning logging rejects', async () => {
-    let sendAttempt = 0;
+  it('pushes a fix pill before enqueueing once and replays idempotent statuses', async () => {
+    const sendResult = deferred<string>();
+    const sequence: string[] = [];
     const harness = createHarness({
       sendAttachments: () => {
-        sendAttempt += 1;
-        return sendAttempt === 1 ? Promise.reject(new Error('attachment failed')) : Promise.resolve();
+        sequence.push('attachment');
+        return Promise.resolve();
       },
-      log: () => Promise.reject(new Error('logging failed')),
+      send: options => {
+        sequence.push('send');
+        expect(options).toEqual({ mode: 'enqueue', prompt: FIX_ANNOTATION_BATCH_PROMPT });
+        return sendResult.promise;
+      },
     });
     application = await startCopilotExtension(harness.startOptions);
-    const opened = await harness.canvas().open(openContext('canvas-attachment-recovery'));
+    const opened = await harness.canvas().open(openContext('canvas-fix'));
     const client = await openRoom(requiredUrl(opened.url));
+    try {
+      await harness
+        .tool('manifold_execute_script')
+        .handler?.({ code: 'result = Manifold.cube(1);', description: 'first' }, invocation('manifold_execute_script'));
+      const version = requiredString(
+        (await client.messages.waitFor(message => message.kind === 'model_version' && message.modelVersion !== 'none'))
+          .modelVersion,
+      );
+      client.socket.send(
+        JSON.stringify(createAnnotationsMessage(version, 1, [pointAnnotation('fix-me', version, 'make it taller')])),
+      );
+      await new Promise<void>(resolvePromise => setTimeout(resolvePromise, 10));
+      const request = createHostActionInvocation({
+        requestId: 'fix-request',
+        actionId: FIX_ANNOTATION_BATCH_ACTION_ID,
+        modelVersion: version,
+        annotationRevision: 1,
+        annotationIds: ['fix-me'],
+        input: { batchId: 'fix-batch' },
+      });
+      client.socket.send(JSON.stringify(request));
+      await client.messages.waitFor(
+        message =>
+          message.kind === 'host_action_status' &&
+          message.requestId === request.requestId &&
+          message.state === 'running',
+      );
+      await eventually(() => harness.send.mock.calls.length === 1);
+      expect(sequence).toEqual(['attachment', 'send']);
+      expect(harness.sendAttachments).toHaveBeenCalledTimes(1);
+
+      client.socket.send(JSON.stringify(request));
+      await client.messages.waitForCount(
+        message => message.kind === 'host_action_status' && message.requestId === request.requestId,
+        3,
+      );
+      expect(harness.sendAttachments).toHaveBeenCalledTimes(1);
+      expect(harness.send).toHaveBeenCalledTimes(1);
+
+      sendResult.resolve('assistant-message');
+      await client.messages.waitFor(
+        message =>
+          message.kind === 'host_action_status' &&
+          message.requestId === request.requestId &&
+          message.state === 'succeeded',
+      );
+      client.socket.send(JSON.stringify(request));
+      await client.messages.waitForCount(
+        message =>
+          message.kind === 'host_action_status' &&
+          message.requestId === request.requestId &&
+          message.state === 'succeeded',
+        2,
+      );
+      expect(harness.sendAttachments).toHaveBeenCalledTimes(1);
+      expect(harness.send).toHaveBeenCalledTimes(1);
+    } finally {
+      client.socket.terminate();
+    }
+  });
+
+  it('reports validation and SDK failures without transformed-prompt or unhandled-rejection paths', async () => {
     const unhandled: unknown[] = [];
     const onUnhandled = (reason: unknown): void => {
       unhandled.push(reason);
     };
     process.on('unhandledRejection', onUnhandled);
+    let attachmentAttempts = 0;
+    const harness = createHarness({
+      sendAttachments: () => {
+        attachmentAttempts += 1;
+        return attachmentAttempts === 1 ? Promise.reject(new Error('attachment failed')) : Promise.resolve();
+      },
+      send: () => Promise.reject(new Error('send failed')),
+      log: () => Promise.reject(new Error('logging failed')),
+    });
+    application = await startCopilotExtension(harness.startOptions);
+    const opened = await harness.canvas().open(openContext('canvas-failures'));
+    const client = await openRoom(requiredUrl(opened.url));
     try {
       await harness
         .tool('manifold_execute_script')
@@ -274,30 +338,72 @@ describe('production Copilot Extension composition', () => {
           .modelVersion,
       );
       client.socket.send(
-        JSON.stringify(createAnnotationsMessage(version, 1, [pointAnnotation('failed', version, 'first note')])),
-      );
-      await eventually(() => harness.sendAttachments.mock.calls.length === 1 && harness.log.mock.calls.length === 1);
-
-      client.socket.send(
         JSON.stringify(
           createAnnotationsMessage(version, 2, [
-            pointAnnotation('failed', version, 'first note'),
-            pointAnnotation('recovered', version, 'second note'),
+            pointAnnotation('noted', version, 'keep this note'),
+            pointAnnotation('empty', version, ''),
           ]),
         ),
       );
-      await eventually(() => harness.sendAttachments.mock.calls.length === 2);
-      expect(harness.sendAttachments.mock.calls[1]?.[0].attachments).toMatchObject([
-        {
-          payload: {
-            snapshot: {
-              annotations: [{ id: 'recovered', note: 'second note' }],
-            },
-          },
-        },
-      ]);
       await new Promise<void>(resolvePromise => setTimeout(resolvePromise, 10));
+
+      await expectFailedAction(client, {
+        requestId: 'missing-batch-id',
+        actionId: ATTACH_ANNOTATION_BATCH_ACTION_ID,
+        modelVersion: version,
+        annotationRevision: 2,
+        annotationIds: ['noted'],
+      });
+      await expectFailedAction(client, {
+        requestId: 'missing-annotation-ids',
+        actionId: ATTACH_ANNOTATION_BATCH_ACTION_ID,
+        modelVersion: version,
+        annotationRevision: 2,
+        input: { batchId: 'batch' },
+      });
+      await expectFailedAction(client, {
+        requestId: 'bad-location-count',
+        actionId: ATTACH_LOCATION_SELECTION_ACTION_ID,
+        modelVersion: version,
+        annotationRevision: 2,
+        annotationIds: ['noted', 'empty'],
+      });
+      await expectFailedAction(client, {
+        requestId: 'location-with-note',
+        actionId: ATTACH_LOCATION_SELECTION_ACTION_ID,
+        modelVersion: version,
+        annotationRevision: 2,
+        annotationIds: ['noted'],
+      });
+      await expectFailedAction(client, {
+        requestId: 'stale-revision',
+        actionId: ATTACH_ANNOTATION_BATCH_ACTION_ID,
+        modelVersion: version,
+        annotationRevision: 1,
+        annotationIds: ['noted'],
+        input: { batchId: 'batch' },
+      });
+      await expectFailedAction(client, {
+        requestId: 'attachment-failure',
+        actionId: ATTACH_ANNOTATION_BATCH_ACTION_ID,
+        modelVersion: version,
+        annotationRevision: 2,
+        annotationIds: ['noted'],
+        input: { batchId: 'batch' },
+      });
+      await expectFailedAction(client, {
+        requestId: 'send-failure',
+        actionId: FIX_ANNOTATION_BATCH_ACTION_ID,
+        modelVersion: version,
+        annotationRevision: 2,
+        annotationIds: ['noted'],
+        input: { batchId: 'fix-batch' },
+      });
+
+      await new Promise<void>(resolvePromise => setTimeout(resolvePromise, 25));
+      expect(harness.send).toHaveBeenCalledTimes(1);
       expect(unhandled).toEqual([]);
+      expect(harness.joinConfig()?.hooks?.onUserPromptTransformed).toBeUndefined();
     } finally {
       process.off('unhandledRejection', onUnhandled);
       client.socket.terminate();
@@ -364,7 +470,7 @@ describe('production Copilot Extension composition', () => {
       joinSession: () => join.promise,
       shutdownTimings: {
         disconnectTimeoutMs: 25,
-        attachmentDrainTimeoutMs: 25,
+        fixSendDrainTimeoutMs: 25,
       },
     });
     const starting = startCopilotExtension(harness.startOptions);
@@ -380,14 +486,18 @@ describe('production Copilot Extension composition', () => {
     await expect(fetch(requiredUrl(opened.url))).rejects.toThrow();
   });
 
-  it('bounds explicit disconnect and pending attachment sends, then ignores late settlement', async () => {
-    const pendingAttachment = deferred<void>();
+  it('bounds pending fix sends and explicit disconnect, then ignores late settlement', async () => {
+    const pendingSend = deferred<string>();
     const pendingDisconnect = deferred<void>();
     const sequence: string[] = [];
     const harness = createHarness({
       sendAttachments: () => {
         sequence.push('attachment');
-        return pendingAttachment.promise;
+        return Promise.resolve();
+      },
+      send: () => {
+        sequence.push('fix-send');
+        return pendingSend.promise;
       },
       disconnect: () => {
         sequence.push('disconnect');
@@ -396,7 +506,7 @@ describe('production Copilot Extension composition', () => {
       onRunnerDispose: () => sequence.push('modeling-dispose'),
       shutdownTimings: {
         disconnectTimeoutMs: 30,
-        attachmentDrainTimeoutMs: 30,
+        fixSendDrainTimeoutMs: 30,
       },
     });
     application = await startCopilotExtension(harness.startOptions);
@@ -418,7 +528,20 @@ describe('production Copilot Extension composition', () => {
       client.socket.send(
         JSON.stringify(createAnnotationsMessage(version, 1, [pointAnnotation('pending', version, 'wait')])),
       );
-      await eventually(() => harness.sendAttachments.mock.calls.length === 1);
+      await new Promise<void>(resolvePromise => setTimeout(resolvePromise, 10));
+      client.socket.send(
+        JSON.stringify(
+          createHostActionInvocation({
+            requestId: 'pending-fix',
+            actionId: FIX_ANNOTATION_BATCH_ACTION_ID,
+            modelVersion: version,
+            annotationRevision: 1,
+            annotationIds: ['pending'],
+            input: { batchId: 'pending-batch' },
+          }),
+        ),
+      );
+      await eventually(() => harness.send.mock.calls.length === 1);
 
       const startedAt = performance.now();
       await application.shutdown({ disconnectSession: true });
@@ -426,13 +549,14 @@ describe('production Copilot Extension composition', () => {
 
       expect(elapsedMs).toBeGreaterThanOrEqual(50);
       expect(elapsedMs).toBeLessThan(500);
+      expect(sequence.slice(0, 2)).toEqual(['attachment', 'fix-send']);
       expect(sequence.indexOf('disconnect')).toBeGreaterThanOrEqual(0);
       expect(sequence.indexOf('disconnect')).toBeLessThan(sequence.indexOf('modeling-dispose'));
       expect(application.liveRoomCount).toBe(0);
       expect(harness.runner.disposeCalls).toBe(1);
       expect(harness.renderer.disposeCalls).toBe(1);
 
-      pendingAttachment.reject(new Error('late attachment failure'));
+      pendingSend.reject(new Error('late send failure'));
       pendingDisconnect.reject(new Error('late disconnect failure'));
       await new Promise<void>(resolvePromise => setTimeout(resolvePromise, 25));
       expect(unhandled).toEqual([]);
@@ -448,7 +572,7 @@ describe('production Copilot Extension composition', () => {
       disconnect: () => Promise.reject(new Error('disconnect failed')),
       shutdownTimings: {
         disconnectTimeoutMs: 25,
-        attachmentDrainTimeoutMs: 25,
+        fixSendDrainTimeoutMs: 25,
       },
     });
     application = await startCopilotExtension(harness.startOptions);
@@ -464,12 +588,12 @@ describe('production Copilot Extension composition', () => {
   });
 
   it('uses local-only bounded cleanup for parent signals without SDK disconnect', async () => {
-    const pendingAttachment = deferred<void>();
+    const pendingSend = deferred<string>();
     const harness = createHarness({
-      sendAttachments: () => pendingAttachment.promise,
+      send: () => pendingSend.promise,
       shutdownTimings: {
         disconnectTimeoutMs: 25,
-        attachmentDrainTimeoutMs: 25,
+        fixSendDrainTimeoutMs: 25,
       },
     });
     application = await startCopilotExtension(harness.startOptions);
@@ -486,7 +610,20 @@ describe('production Copilot Extension composition', () => {
       client.socket.send(
         JSON.stringify(createAnnotationsMessage(version, 1, [pointAnnotation('signal', version, 'signal')])),
       );
-      await eventually(() => harness.sendAttachments.mock.calls.length === 1);
+      await new Promise<void>(resolvePromise => setTimeout(resolvePromise, 10));
+      client.socket.send(
+        JSON.stringify(
+          createHostActionInvocation({
+            requestId: 'signal-fix',
+            actionId: FIX_ANNOTATION_BATCH_ACTION_ID,
+            modelVersion: version,
+            annotationRevision: 1,
+            annotationIds: ['signal'],
+            input: { batchId: 'signal-batch' },
+          }),
+        ),
+      );
+      await eventually(() => harness.send.mock.calls.length === 1);
 
       const signalRuntime = createSignalRuntime();
       installExtensionSignalHandlers(application, signalRuntime.runtime);
@@ -503,7 +640,7 @@ describe('production Copilot Extension composition', () => {
       expect(harness.runner.disposeCalls).toBe(1);
       expect(harness.renderer.disposeCalls).toBe(1);
       await expect(fetch(requiredUrl(opened.url))).rejects.toThrow();
-      pendingAttachment.reject(new Error('late signal attachment failure'));
+      pendingSend.reject(new Error('late signal send failure'));
       await new Promise<void>(resolvePromise => setTimeout(resolvePromise, 10));
       application = undefined;
     } finally {
@@ -513,6 +650,7 @@ describe('production Copilot Extension composition', () => {
 });
 
 interface HarnessOptions {
+  send?: (options: Parameters<CopilotExtensionSession['send']>[0]) => Promise<string>;
   sendAttachments?: (
     input: Parameters<CopilotExtensionSession['rpc']['extensions']['sendAttachmentsToMessage']>[0],
   ) => Promise<void>;
@@ -521,7 +659,7 @@ interface HarnessOptions {
   joinSession?: (config: JoinSessionConfig, session: CopilotExtensionSession) => Promise<CopilotExtensionSession>;
   shutdownTimings?: {
     disconnectTimeoutMs?: number;
-    attachmentDrainTimeoutMs?: number;
+    fixSendDrainTimeoutMs?: number;
   };
   onRunnerDispose?: () => void;
 }
@@ -530,7 +668,9 @@ function createHarness(options: HarnessOptions = {}) {
   const runner = new StubRunner(options.onRunnerDispose);
   const renderer = new StubRenderer();
   const modelingSession = new ModelingSession(new ModelingEngine(runner, renderer));
-  const send = vi.fn(() => Promise.resolve('assistant-message-42'));
+  const send = vi.fn((message: Parameters<CopilotExtensionSession['send']>[0]) =>
+    options.send ? options.send(message) : Promise.resolve('assistant-message-42'),
+  );
   const sendAttachments = vi.fn(
     (params: Parameters<CopilotExtensionSession['rpc']['extensions']['sendAttachmentsToMessage']>[0]) =>
       options.sendAttachments ? options.sendAttachments(params) : Promise.resolve(),
@@ -606,21 +746,8 @@ function createHarness(options: HarnessOptions = {}) {
       }
       return tool;
     },
-    async transformPrompt(transformedPrompt: string) {
-      const hook = joinConfig?.hooks?.onUserPromptTransformed;
-      if (!hook) {
-        throw new Error('onUserPromptTransformed was not registered.');
-      }
-      return hook(
-        {
-          sessionId: 'mock-session',
-          prompt: 'user prompt',
-          transformedPrompt,
-          timestamp: new Date(),
-          workingDirectory: testWorkspace,
-        },
-        { sessionId: 'mock-session' },
-      );
+    joinConfig(): JoinSessionConfig | undefined {
+      return joinConfig;
     },
     emitSessionShutdown(): void {
       const onEvent = joinConfig?.onEvent;
@@ -710,6 +837,46 @@ function pointAnnotation(id: string, modelVersion: string, note: string, clientI
     worldCoord: [1, 2, 3],
     ...(clientId !== undefined ? { clientId } : {}),
   };
+}
+
+function regionAnnotation(id: string, modelVersion: string, note: string): WireAnnotation {
+  return {
+    id,
+    modelVersion,
+    kind: 'region',
+    partLabel: 'region#1',
+    note,
+    worldCoord: [4, 5, 6],
+    triCount: 12,
+  };
+}
+
+async function invokeAction(
+  client: RoomClient,
+  input: Parameters<typeof createHostActionInvocation>[0],
+): Promise<Record<string, unknown>> {
+  const invocationMessage = createHostActionInvocation(input);
+  client.socket.send(JSON.stringify(invocationMessage));
+  return client.messages.waitFor(
+    message =>
+      message.kind === 'host_action_status' &&
+      message.requestId === invocationMessage.requestId &&
+      message.state === 'succeeded',
+  );
+}
+
+async function expectFailedAction(
+  client: RoomClient,
+  input: Parameters<typeof createHostActionInvocation>[0],
+): Promise<Record<string, unknown>> {
+  const invocationMessage = createHostActionInvocation(input);
+  client.socket.send(JSON.stringify(invocationMessage));
+  return client.messages.waitFor(
+    message =>
+      message.kind === 'host_action_status' &&
+      message.requestId === invocationMessage.requestId &&
+      message.state === 'failed',
+  );
 }
 
 function openContext(instanceId: string) {

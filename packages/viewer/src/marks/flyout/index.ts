@@ -20,19 +20,21 @@ import { FlyoutView, type FlyoutViewModel } from './flyout-view.js';
  *
  * The facade subscribes to the {@link AnnotationStore} to create and
  * dispose views as annotations come and go, and exposes the small
- * public surface the rest of the viewer (mark tool, sidebar,
+ * public surface the rest of the viewer (mark tool, React controls,
  * `installMarks`) actually needs.
  *
  * We intentionally avoid CSS2DRenderer here: a small bespoke layer is
- * simpler, gives us full control over events (Ctrl+drag selection
- * should not start when the user clicks inside the flyout), and avoids
+ * simpler, gives us full control over events (mark gestures should not
+ * start when the user clicks inside the flyout), and avoids
  * pulling another three.js addon.
  *
- * Save semantics:
+ * Save semantics for draft comments:
  *  - opening a flyout puts focus in the textarea
  *  - clicking outside the flyout (or pressing Esc) "dismisses" it
  *  - on dismiss: if the textarea is non-empty, we save; if empty, we
- *    discard the annotation (so accidental Ctrl+clicks leave no trace)
+ *    discard the annotation (so accidental marks leave no trace)
+ *  - committed comments retain a subdued read-only pill
+ *  - selection annotations never create flyouts
  */
 export class FlyoutLayer {
   private readonly host: HTMLDivElement;
@@ -124,16 +126,24 @@ export class FlyoutLayer {
     this.controller.dismissAll();
   }
 
-  private sync(items: Annotation[]): void {
+  private sync(items: readonly Annotation[]): void {
     const aliveIds = new Set(items.map(a => a.id));
+    const editableIds = new Set(
+      items
+        .filter(annotation => annotation.intent === 'comment' && annotation.state === 'draft')
+        .map(annotation => annotation.id),
+    );
     for (const [id, v] of this.views) {
       if (!aliveIds.has(id)) {
         v.dispose();
         this.views.delete(id);
       }
     }
-    this.controller.syncAlive(aliveIds);
+    this.controller.syncAlive(editableIds);
     for (const ann of items) {
+      if (ann.intent === 'selection') {
+        continue;
+      }
       const existing = this.views.get(ann.id);
       if (existing) {
         existing.setView(this.toViewModel(ann));
@@ -192,7 +202,8 @@ export class FlyoutLayer {
       partLabel: ann.partLabel,
       note,
       kind: ann.kind,
-      expanded: this.controller.getExpandedId() === ann.id,
+      expanded: ann.state === 'draft' && this.controller.getExpandedId() === ann.id,
+      readOnly: ann.state !== 'draft',
     };
   }
 

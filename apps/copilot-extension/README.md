@@ -53,24 +53,35 @@ inline `code`; local `filePath` loading is intentionally deferred. Captures are
 written beneath the active Copilot session workspace at
 `files/manifold3d-captures/` and returned as a path.
 
-Saving a non-empty Viewer annotation automatically appends one
-`extension_context` pill for that annotation. Multiple saved annotations produce
-multiple pills. SDK 1.0.11 attachments are append-only and cannot be updated in
-place, so each pill carries both its complete structured annotation snapshot and
-a live binding token. This uses the same
-`session.rpc.extensions.sendAttachmentsToMessage` + `extension_context`
-contract as the Copilot SDK sample. When the message is submitted,
-`onUserPromptTransformed` resolves every included token against the current
-Viewer room and replaces its earlier payload with the latest bounded state of
-that annotation. Removing a pill prevents injection; editing an annotation
-before send does not add a duplicate pill. The model receives inline structured
-JSON, never a file path or opaque blob. Extension annotation editors use the
-compact layout and the annotation list no longer opens automatically. Shutdown
-waits for pending attachment sends only for a bounded interval. An explicit
-disconnect is attempted first with its own timeout, while parent `SIGTERM`
-performs local cleanup without requesting disconnect from the dying SDK parent.
-Session shutdown is observed through `JoinSessionConfig.onEvent`, so it is
-registered before the extension resume/join RPC can emit early events.
+Each Viewer room exposes three host actions:
+
+- `attach-annotation-batch` in `annotation-batch`
+- `fix-annotation-batch` in `annotation-batch`
+- `attach-location-selection` in `selection-gesture`
+
+Batch actions require explicit `annotationIds` and input
+`{ "batchId": "<safe-id>" }`. They push exactly one `extension_context` pill
+containing a bounded version 2 static snapshot with mode `annotation-batch`,
+the model version, annotation revision, batch id, selected geometry, and notes.
+`fix-annotation-batch` pushes that pill before enqueueing
+`Revise the current manifold-3d model using the attached annotation batch.` and
+reports accepted, running, and terminal status through the Viewer Host request.
+Retransmitting the same request id does not push or enqueue twice.
+
+`attach-location-selection` requires exactly one point or region annotation
+whose note is empty. Its single version 2 pill uses mode `location-selection`,
+omits `batchId` and comment text, and records only the selected location.
+Snapshots are validated against the room's committed model version and
+annotation revision before dispatch. Saving or editing annotations alone never
+adds pills, and the Extension does not rewrite transformed prompts or maintain
+live attachment tokens.
+
+Shutdown drains pending programmatic fix sends for a bounded interval. Explicit
+disconnect has its own timeout, while parent `SIGTERM` performs local cleanup
+without requesting disconnect from the dying SDK parent. Session shutdown is
+observed through `JoinSessionConfig.onEvent`, registered before join can emit
+early events. SDK timeline logging is best effort and cannot poison action
+delivery.
 
 ## Experimental Canvas embedding exception
 

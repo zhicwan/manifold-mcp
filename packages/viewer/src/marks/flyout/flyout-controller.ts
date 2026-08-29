@@ -32,17 +32,20 @@ export interface FlyoutControllerViewBridge {
  * a Node environment with only the {@link AnnotationStore} and a fake
  * {@link FlyoutControllerViewBridge}.
  *
- * Lifecycle of a draft:
+ * Lifecycle of an editable comment draft:
  *  - {@link open} snapshots the current note as the draft baseline so
  *    {@link cancel} can revert.
  *  - {@link setDraft} updates the in-flight text as the user types.
  *  - {@link commit} writes the draft to the store. Empty notes on a
- *    never-saved annotation are removed entirely (so accidental
- *    Ctrl+clicks leave no trace).
+ *    never-saved annotation are removed entirely (so accidental marks
+ *    leave no trace).
  *  - {@link cancel} discards the draft. If the annotation has never
  *    been saved (`note === ''`) it is also removed.
  *  - {@link dismissAll} commits the currently-expanded draft (the
  *    "click outside to save" behaviour).
+ *
+ * Selection annotations and committed comments are read-only and ignored by
+ * every editing entry point.
  */
 export class FlyoutController {
   private expandedId: string | null = null;
@@ -72,7 +75,7 @@ export class FlyoutController {
    */
   open(id: string): void {
     const ann = this.store.get(id);
-    if (!ann) {
+    if (!ann || ann.intent !== 'comment' || ann.state !== 'draft') {
       return;
     }
     if (this.expandedId !== null && this.expandedId !== id) {
@@ -90,26 +93,31 @@ export class FlyoutController {
 
   /** Update the in-flight draft text for `id`. View refresh is left to the caller. */
   setDraft(id: string, value: string): void {
+    const ann = this.store.get(id);
+    if (!ann || ann.intent !== 'comment' || ann.state !== 'draft') {
+      return;
+    }
     this.drafts.set(id, value.slice(0, MAX_ANNOTATION_NOTE_LENGTH));
   }
 
   /**
    * Commit the in-flight draft to the store. If the resulting note is
    * empty AND the annotation never had any saved content, delete it
-   * entirely so accidental Ctrl+clicks leave no trace.
+   * entirely so accidental marks leave no trace.
    */
   commit(id: string): void {
     const ann = this.store.get(id);
-    if (!ann) {
+    if (!ann || ann.intent !== 'comment' || ann.state !== 'draft') {
       this.drafts.delete(id);
       if (this.expandedId === id) {
         this.expandedId = null;
+        this.view.refresh(id);
       }
       return;
     }
     const draft = this.drafts.get(id) ?? ann.note;
     const trimmed = draft.trim();
-    if (trimmed === '' && ann.note.trim() === '') {
+    if (trimmed === '') {
       this.store.remove(id);
     } else if (draft !== ann.note) {
       this.store.update(id, { note: draft });
@@ -125,7 +133,7 @@ export class FlyoutController {
    */
   cancel(id: string): void {
     const ann = this.store.get(id);
-    if (!ann) {
+    if (!ann || ann.intent !== 'comment' || ann.state !== 'draft') {
       this.collapseAfterFinish(id);
       return;
     }
@@ -149,17 +157,16 @@ export class FlyoutController {
   }
 
   /**
-   * Reconcile internal state with a fresh annotation list (e.g. on
-   * model push or external edit). Drops drafts/expansion for ids that
-   * no longer exist.
+   * Reconcile internal state with the current editable-comment ids. Drops
+   * drafts/expansion for annotations that were removed or became committed.
    */
-  syncAlive(aliveIds: ReadonlySet<string>): void {
+  syncAlive(editableIds: ReadonlySet<string>): void {
     for (const id of [...this.drafts.keys()]) {
-      if (!aliveIds.has(id)) {
+      if (!editableIds.has(id)) {
         this.drafts.delete(id);
       }
     }
-    if (this.expandedId !== null && !aliveIds.has(this.expandedId)) {
+    if (this.expandedId !== null && !editableIds.has(this.expandedId)) {
       this.expandedId = null;
     }
   }

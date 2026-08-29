@@ -9,7 +9,7 @@ import { MarkerRenderer } from './marker-renderer.js';
 import { MarkTool, type MarkToolMode } from './mark-tool.js';
 import type { PreviewPayload } from '../types.js';
 
-interface MarksDeps {
+export interface MarksDeps {
   scene: THREE.Scene;
   camera: THREE.Camera;
   controls: OrbitControls;
@@ -21,6 +21,8 @@ interface MarksDeps {
   onModeChange?(mode: MarkToolMode): void;
   /** Notified after a non-empty annotation edit is explicitly committed. */
   onAnnotationCommit?(): void;
+  /** Receives a pending selection id so ViewerCanvas can attach it. */
+  onSelectionCreated?(id: string): void;
 }
 
 /**
@@ -30,9 +32,8 @@ interface MarksDeps {
  * call: `frame()` once per render frame; `setModelVersion()` and
  * `setPayload()` whenever a new mesh arrives.
  *
- * The sidebar is rendered by React (see <MarksSidebar/>); React reads
- * the same store via useSyncExternalStore and dispatches edits/deletes
- * straight into it.
+ * React reads the same store via useSyncExternalStore and invokes its narrow
+ * batch/selection transaction APIs.
  */
 export function installMarks(deps: MarksDeps): MarksHandle {
   const store = new AnnotationStore();
@@ -56,6 +57,7 @@ export function installMarks(deps: MarksDeps): MarksHandle {
     deps.getMesh,
     () => resolver,
     deps.onModeChange,
+    deps.onSelectionCreated,
   );
   const hover = new HoverHighlight(
     deps.scene,

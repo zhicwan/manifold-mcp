@@ -66,6 +66,13 @@ const INITIAL_SNAPSHOT: HostActionsSnapshot = {
 export class HostActionsClient {
   private readonly listeners = new Set<Listener>();
   private readonly retainedInvocations = new Map<string, HostActionInvocationMessage>();
+  private readonly terminalWaiters = new Map<
+    string,
+    {
+      resolve(status: HostActionStatusMessage): void;
+      reject(error: Error): void;
+    }
+  >();
   private snapshot: HostActionsSnapshot = INITIAL_SNAPSHOT;
 
   constructor(private readonly options: HostActionsClientOptions) {}
@@ -92,6 +99,10 @@ export class HostActionsClient {
     const resumed = message.resumed === true && this.snapshot.clientId === message.clientId;
     if (!resumed) {
       this.retainedInvocations.clear();
+      for (const waiter of this.terminalWaiters.values()) {
+        waiter.reject(new Error('Viewer Host client identity changed before the request completed.'));
+      }
+      this.terminalWaiters.clear();
       this.update({
         ...this.snapshot,
         statuses: {},
@@ -128,6 +139,11 @@ export class HostActionsClient {
   receiveStatus(status: HostActionStatusMessage): void {
     if (status.state === 'succeeded' || status.state === 'failed') {
       this.retainedInvocations.delete(status.requestId);
+      const waiter = this.terminalWaiters.get(status.requestId);
+      if (waiter) {
+        this.terminalWaiters.delete(status.requestId);
+        waiter.resolve(status);
+      }
     }
     this.update({
       ...this.snapshot,
@@ -177,8 +193,26 @@ export class HostActionsClient {
     }
   }
 
+  invokeAndWait(actionId: string, options: HostActionInvokeOptions = {}): Promise<HostActionStatusMessage> {
+    const requestId = this.invoke(actionId, options);
+    if (!requestId) {
+      return Promise.reject(new Error(`Host action "${actionId}" is unavailable.`));
+    }
+    const current = this.snapshot.statuses[requestId];
+    if (current && (current.state === 'succeeded' || current.state === 'failed')) {
+      return Promise.resolve(current);
+    }
+    return new Promise<HostActionStatusMessage>((resolve, reject) => {
+      this.terminalWaiters.set(requestId, { resolve, reject });
+    });
+  }
+
   dispose(): void {
     this.retainedInvocations.clear();
+    for (const waiter of this.terminalWaiters.values()) {
+      waiter.reject(new Error('Host actions client was disposed before the request completed.'));
+    }
+    this.terminalWaiters.clear();
     this.listeners.clear();
     this.snapshot = INITIAL_SNAPSHOT;
   }

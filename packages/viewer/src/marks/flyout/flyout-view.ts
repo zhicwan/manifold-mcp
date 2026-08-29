@@ -11,6 +11,8 @@ export interface FlyoutViewModel {
   note: string;
   kind: AnnotationKind;
   expanded: boolean;
+  /** Committed comment pills remain visible but cannot be reopened. */
+  readOnly: boolean;
 }
 
 export interface FlyoutViewCallbacks {
@@ -33,6 +35,7 @@ export interface FlyoutViewCallbacks {
 export class FlyoutView {
   readonly element: HTMLDivElement;
   private readonly textarea: HTMLTextAreaElement;
+  private readonly pill: HTMLButtonElement;
   private readonly labelEl: HTMLElement;
   private readonly previewEl: HTMLElement;
   private vm: FlyoutViewModel;
@@ -80,8 +83,8 @@ export class FlyoutView {
         callbacks.onCancel();
       }
     });
-    const pill = wrap.querySelector('.marks-flyout-pill') as HTMLButtonElement;
-    pill.addEventListener('click', ev => {
+    this.pill = wrap.querySelector('.marks-flyout-pill') as HTMLButtonElement;
+    this.pill.addEventListener('click', ev => {
       ev.stopPropagation();
       callbacks.onPillClick();
     });
@@ -144,6 +147,11 @@ export class FlyoutView {
     } else {
       this.element.classList.remove('expanded');
     }
+    this.element.dataset.state = vm.readOnly ? 'committed' : 'draft';
+    this.element.style.opacity = vm.readOnly ? '0.58' : '';
+    this.pill.disabled = vm.readOnly;
+    this.pill.style.cursor = vm.readOnly ? 'default' : '';
+    this.textarea.readOnly = vm.readOnly;
   }
 }
 

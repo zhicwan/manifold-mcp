@@ -25,7 +25,11 @@ const descriptor: HostActionDescriptor = {
 
 describe('host action wire protocol', () => {
   it('accepts versioned safe descriptors, invocations, and statuses', () => {
-    const manifest = createHostActionsManifest([descriptor]);
+    const manifest = createHostActionsManifest([
+      descriptor,
+      { ...descriptor, id: 'batch', slot: 'annotation-batch' },
+      { ...descriptor, id: 'selection', slot: 'selection-gesture' },
+    ]);
     const invocation = createHostActionInvocation({
       requestId: 'request-1',
       actionId: descriptor.id,
