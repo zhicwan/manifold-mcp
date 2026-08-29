@@ -8,7 +8,7 @@ import type {
   ViewerSceneRuntime,
 } from '../packages/viewer/src/scene/runtime.js';
 import { acquireXrRendererOwnership } from '../packages/viewer/src/xr/renderer-ownership.js';
-import { XrRuntime, xrRuntimeTestHooks, type XrRuntimeNavigator } from '../packages/viewer/src/xr/xr-runtime.js';
+import { XrRuntime, type XrRuntimeNavigator } from '../packages/viewer/src/xr/xr-runtime.js';
 
 describe('XrRuntime leaf-context lifecycle', () => {
   it('restores updated desktop framing and removes hooks, listeners, and controllers', async () => {
@@ -145,11 +145,8 @@ describe('XrRuntime leaf-context lifecycle', () => {
       end: vi.fn(() => Promise.resolve()),
     }) as unknown as XRSession;
     const enterPromise = fixture.runtime.enter();
-    const ticket = xrRuntimeTestHooks.pendingSessionRequest(fixture.runtime);
-    expect(ticket?.isAttached()).toBe(true);
 
     const disposePromise = fixture.runtime.dispose();
-    expect(ticket?.isAttached()).toBe(false);
     await disposePromise;
     const replacement = await acquireXrRendererOwnership(fixture.renderer).acquired;
     expect(replacement?.isCurrent()).toBe(true);

@@ -40,8 +40,8 @@ export interface WireAnnotation {
 }
 
 export const ANNOTATIONS_PROTOCOL_VERSION = 1 as const;
-export const MAX_ANNOTATIONS = 500;
-export const MAX_ANNOTATION_ID_LENGTH = 64;
+const MAX_ANNOTATIONS = 500;
+const MAX_ANNOTATION_ID_LENGTH = 64;
 export const MAX_ANNOTATION_NOTE_LENGTH = 4_096;
 export const MAX_ANNOTATIONS_PAYLOAD_BYTES = 256 * 1024;
 
@@ -49,31 +49,11 @@ export type AnnotationsProtocolVersion = typeof ANNOTATIONS_PROTOCOL_VERSION;
 
 export interface AnnotationsMessage {
   kind: 'annotations';
-  /** Missing only for the immediately preceding legacy wire format. */
-  protocolVersion?: AnnotationsProtocolVersion;
-  /** Missing only for the immediately preceding legacy wire format. */
-  revision?: number;
+  protocolVersion: AnnotationsProtocolVersion;
+  revision: number;
   modelVersion: string;
   items: WireAnnotation[];
 }
-
-export interface VersionedAnnotationsMessage extends AnnotationsMessage {
-  protocolVersion: AnnotationsProtocolVersion;
-  revision: number;
-}
-
-export interface AnnotationsGuardOptions {
-  /** Defaults to true to interoperate with the immediately preceding viewer. */
-  allowLegacy?: boolean;
-}
-
-/**
- * Server -> client greeting frame, sent immediately after the WS
- * handshake succeeds. Tells the viewer which clientId the server has
- * assigned to it so subsequent uplink messages and replayed snapshots
- * can be reasoned about consistently.
- */
-export type { HelloMessage } from './model.js';
 
 /**
  * Type guard for the WS text frames the preview server accepts from
@@ -90,42 +70,32 @@ export function createAnnotationsMessage(
   modelVersion: string,
   revision: number,
   items: readonly WireAnnotation[],
-): VersionedAnnotationsMessage {
-  const parsed = parseAnnotationsMessage(
-    {
-      kind: 'annotations',
-      protocolVersion: ANNOTATIONS_PROTOCOL_VERSION,
-      revision,
-      modelVersion,
-      items: [...items],
-    },
-    { allowLegacy: false },
-  );
-  return parsed as VersionedAnnotationsMessage;
+): AnnotationsMessage {
+  return parseAnnotationsMessage({
+    kind: 'annotations',
+    protocolVersion: ANNOTATIONS_PROTOCOL_VERSION,
+    revision,
+    modelVersion,
+    items: [...items],
+  });
 }
 
-export function parseAnnotationsMessage(
-  x: unknown,
-  { allowLegacy = true }: AnnotationsGuardOptions = {},
-): AnnotationsMessage {
-  if (!x || typeof x !== 'object' || Array.isArray(x)) {
-    throw new Error('Annotations message must be an object.');
-  }
-  const m = x as Record<string, unknown>;
-  if (Object.keys(m).some(key => !['kind', 'protocolVersion', 'revision', 'modelVersion', 'items'].includes(key))) {
-    throw new Error('Annotations message contains unsupported fields.');
-  }
+export function parseAnnotationsMessage(x: unknown): AnnotationsMessage {
+  const m = requireRecord(x, 'Annotations message');
+  requireOnlyKeys(m, ['kind', 'protocolVersion', 'revision', 'modelVersion', 'items'], 'Annotations message');
   if (m.kind !== 'annotations') {
     throw new Error('Annotations message kind must be "annotations".');
   }
-  const legacy = m.protocolVersion === undefined && m.revision === undefined;
-  if (legacy) {
-    if (!allowLegacy) {
-      throw new Error('Annotations protocolVersion and revision are required.');
-    }
-  } else if (m.protocolVersion !== ANNOTATIONS_PROTOCOL_VERSION) {
+  if (m.protocolVersion === undefined) {
+    throw new Error('Annotations protocolVersion is required.');
+  }
+  if (m.protocolVersion !== ANNOTATIONS_PROTOCOL_VERSION) {
     throw new Error(`Unsupported annotations protocolVersion ${String(m.protocolVersion)}.`);
-  } else if (typeof m.revision !== 'number' || !Number.isSafeInteger(m.revision) || m.revision < 0) {
+  }
+  if (m.revision === undefined) {
+    throw new Error('Annotations revision is required.');
+  }
+  if (typeof m.revision !== 'number' || !Number.isSafeInteger(m.revision) || m.revision < 0) {
     throw new Error('Annotations revision must be a nonnegative safe integer.');
   }
   const modelVersion = boundedString(m.modelVersion, 'Annotations modelVersion', 128, false);
@@ -139,32 +109,22 @@ export function parseAnnotationsMessage(
   if (items.some(item => item.modelVersion !== modelVersion)) {
     throw new Error('Every annotation modelVersion must match its snapshot.');
   }
-  try {
-    if (new TextEncoder().encode(JSON.stringify(x)).byteLength > MAX_ANNOTATIONS_PAYLOAD_BYTES) {
-      throw new Error(`Annotations payload exceeds ${MAX_ANNOTATIONS_PAYLOAD_BYTES} bytes.`);
-    }
-  } catch (error) {
-    if (error instanceof Error && error.message.startsWith('Annotations payload exceeds')) {
-      throw error;
-    }
-    throw new Error('Annotations payload must be JSON serializable.', { cause: error });
-  }
-  return {
+  const message: AnnotationsMessage = {
     kind: 'annotations',
-    ...(!legacy
-      ? {
-          protocolVersion: ANNOTATIONS_PROTOCOL_VERSION,
-          revision: m.revision as number,
-        }
-      : {}),
+    protocolVersion: ANNOTATIONS_PROTOCOL_VERSION,
+    revision: m.revision,
     modelVersion,
     items,
   };
+  if (new TextEncoder().encode(JSON.stringify(message)).byteLength > MAX_ANNOTATIONS_PAYLOAD_BYTES) {
+    throw new Error(`Annotations payload exceeds ${MAX_ANNOTATIONS_PAYLOAD_BYTES} bytes.`);
+  }
+  return message;
 }
 
-export function isAnnotationsMessage(x: unknown, options?: AnnotationsGuardOptions): x is AnnotationsMessage {
+export function isAnnotationsMessage(x: unknown): x is AnnotationsMessage {
   try {
-    parseAnnotationsMessage(x, options);
+    parseAnnotationsMessage(x);
     return true;
   } catch {
     return false;
@@ -172,26 +132,24 @@ export function isAnnotationsMessage(x: unknown, options?: AnnotationsGuardOptio
 }
 
 export function parseWireAnnotation(x: unknown, label = 'Annotation'): WireAnnotation {
-  if (!x || typeof x !== 'object' || Array.isArray(x)) {
-    throw new Error(`${label} must be an object.`);
-  }
-  const a = x as Record<string, unknown>;
-  const allowed = new Set([
-    'id',
-    'modelVersion',
-    'kind',
-    'partLabel',
-    'note',
-    'worldCoord',
-    'triCount',
-    'viewPlane',
-    'planeOrigin',
-    'strokes',
-    'clientId',
-  ]);
-  if (Object.keys(a).some(key => !allowed.has(key))) {
-    throw new Error(`${label} contains unsupported fields.`);
-  }
+  const a = requireRecord(x, label);
+  requireOnlyKeys(
+    a,
+    [
+      'id',
+      'modelVersion',
+      'kind',
+      'partLabel',
+      'note',
+      'worldCoord',
+      'triCount',
+      'viewPlane',
+      'planeOrigin',
+      'strokes',
+      'clientId',
+    ],
+    label,
+  );
   const id = boundedIdentifier(a.id, `${label} id`);
   const modelVersion = boundedString(a.modelVersion, `${label} modelVersion`, 128, false);
   if (a.kind !== 'point' && a.kind !== 'region' && a.kind !== 'sketch') {
@@ -266,6 +224,25 @@ function boundedIdentifier(value: unknown, label: string, maxLength = MAX_ANNOTA
     throw new Error(`${label} must be a safe identifier.`);
   }
   return id;
+}
+
+function requireRecord(value: unknown, label: string): Record<string, unknown> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error(`${label} must be an object.`);
+  }
+  const prototype = Object.getPrototypeOf(value);
+  if (prototype !== Object.prototype && prototype !== null) {
+    throw new Error(`${label} must be a plain object.`);
+  }
+  return value as Record<string, unknown>;
+}
+
+function requireOnlyKeys(record: Record<string, unknown>, allowed: readonly string[], label: string): void {
+  const allowedSet = new Set(allowed);
+  const unexpected = Object.keys(record).find(key => !allowedSet.has(key));
+  if (unexpected !== undefined) {
+    throw new Error(`${label} contains unsupported field "${unexpected}".`);
+  }
 }
 
 function boundedString(value: unknown, label: string, maxLength: number, allowEmpty: boolean): string {

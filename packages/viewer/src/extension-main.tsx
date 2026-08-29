@@ -14,6 +14,6 @@ if (!rootEl) {
 
 createRoot(rootEl).render(
   <ThemeProvider attribute="class" defaultTheme="system" enableSystem disableTransitionOnChange>
-    <ViewerApp annotationUi="compact" />
+    <ViewerApp />
   </ThemeProvider>,
 );

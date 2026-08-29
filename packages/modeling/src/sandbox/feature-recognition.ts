@@ -29,20 +29,15 @@ import type {
 } from '@manifold3d/protocol/wire/model.js';
 import type { ManifoldMesh, ManifoldToplevel } from './manifold-types.js';
 
-export type { FeatureKind } from '@manifold3d/protocol/wire/model.js';
-
-export interface FeatureMeta {
+interface FeatureMeta {
   kind: FeatureKind;
   params: Readonly<Record<string, ViewerFeatureParam | undefined>>;
 }
 
-/** @deprecated Import ViewerFeature from @manifold3d/protocol. */
-export type WireFeature = ViewerFeature;
-
-export interface FeaturePayload {
+interface FeaturePayload {
   features: ViewerFeature[];
   /** One Uint32 per triangle: index into `features`. */
-  triFeatureIds: Uint32Array;
+  triFeatureIds: Uint32Array<ArrayBuffer>;
 }
 
 export interface FeatureStore {
@@ -80,14 +75,9 @@ function wrapWithRecorder(
       const id = ret.originalID();
       // -1 means "not original" — happens for derived manifolds, but
       // primitives produced by these constructors should always be
-      // original. Belt-and-braces: only record positive IDs.
+      // original. Only record positive IDs.
       if (id >= 0 && !registry.has(id)) {
-        try {
-          registry.set(id, { kind, params: paramsBuilder(args) });
-        } catch {
-          // A bad arg shape shouldn't break the user's script; just skip
-          // metadata for this instance and let it appear as 'unknown'.
-        }
+        registry.set(id, { kind, params: paramsBuilder(args) });
       }
     }
     return ret;
@@ -97,8 +87,7 @@ function wrapWithRecorder(
 // ───────────── Per-kind param whitelist ─────────────────────────────────
 
 function num(x: unknown): number | undefined {
-  const n = Number(x);
-  return Number.isFinite(n) ? n : undefined;
+  return typeof x === 'number' && Number.isFinite(x) ? x : undefined;
 }
 
 function numArray(x: unknown, length: number): number[] | undefined {
@@ -107,8 +96,8 @@ function numArray(x: unknown, length: number): number[] | undefined {
   }
   const out: number[] = [];
   for (let i = 0; i < length; i++) {
-    const n = Number(x[i]);
-    if (!Number.isFinite(n)) {
+    const n = x[i];
+    if (typeof n !== 'number' || !Number.isFinite(n)) {
       return undefined;
     }
     out.push(n);
@@ -178,13 +167,6 @@ interface MutableNs {
 }
 
 /**
- * Has Embind started freezing instance prototypes? We log this exactly
- * once per worker so the upgrade is loud but not chatty. Tracked at
- * module scope so multiple per-CrossSection probes share the latch.
- */
-let warnedFrozenEmbindProto = false;
-
-/**
  * manifold-3d uses Embind under the hood, which gives instances a
  * HIDDEN internal prototype that is NOT the same object as
  * `CrossSection.prototype`. Patching `CrossSection.prototype.extrude`
@@ -196,38 +178,24 @@ let warnedFrozenEmbindProto = false;
  * via the existing `garbageCollectFunction` wrapping of
  * `CrossSection.square`.
  *
- * Defensive: if a future Embind release freezes its dispatch prototypes,
- * mutating `proto.extrude` will silently throw in strict mode. We probe
- * with `Object.isFrozen` and skip the patch with a one-time stderr
- * warning instead of crashing the worker.
+ * A changed or frozen Embind dispatch prototype is an incompatible runtime
+ * contract: fail initialization rather than silently dropping feature labels.
  */
 function patchCrossSectionInstanceProto(wasm: ManifoldToplevel, registry: Map<number, FeatureMeta>): void {
   const CS = wasm.CrossSection as unknown as { square?: AnyFn };
   if (typeof CS.square !== 'function') {
-    return;
+    throw new Error('Manifold CrossSection.square is unavailable for feature recognition.');
   }
   const probe = CS.square.call(wasm.CrossSection, [1, 1]);
   if (!probe || typeof probe !== 'object') {
-    return;
+    throw new Error('Manifold CrossSection.square returned an invalid feature-recognition probe.');
   }
   const proto = Object.getPrototypeOf(probe) as Record<string, unknown> | null;
   if (!proto) {
-    return;
+    throw new Error('Manifold CrossSection probe has no feature-recognition prototype.');
   }
   if (Object.isFrozen(proto)) {
-    if (!warnedFrozenEmbindProto) {
-      warnedFrozenEmbindProto = true;
-      // process.stderr is still available here — patch installation runs
-      // BEFORE the SEC-1 sandbox scrub strips `process` from globalThis.
-      try {
-        process.stderr.write(
-          '[manifold3d-mcp] Embind CrossSection prototype is frozen; feature recognition for extrude/revolve is disabled. Update sandbox/feature-recognition.ts to use the new dispatch API.\n',
-        );
-      } catch {
-        /* worker may be in an unusual state during bootstrap; swallow. */
-      }
-    }
-    return;
+    throw new Error('Manifold CrossSection feature-recognition prototype is frozen.');
   }
   if (typeof proto.extrude === 'function') {
     proto.extrude = wrapWithRecorder(proto.extrude as AnyFn, 'extrude', paramsForExtrude, registry);

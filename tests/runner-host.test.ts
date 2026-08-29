@@ -48,23 +48,28 @@ const skipUnlessBuilt = !existsSync(workerJs) || !existsSync(distHost) || proces
 // WORKER_PATH correctly aligned with modeling/dist/runner/worker.js.
 type HostModule = typeof HostModuleNs;
 let host: HostModule;
+let defaultRunner: InstanceType<HostModule['Runner']>;
 
-describe.skipIf(skipUnlessBuilt)('runner host: run()', () => {
+describe.skipIf(skipUnlessBuilt)('runner host: Runner.run()', () => {
   beforeAll(async () => {
     host = (await import(pathToFileURL(distHost).href)) as HostModule;
+    defaultRunner = new host.Runner();
   });
 
   afterAll(async () => {
-    await host.shutdown();
+    await defaultRunner.dispose();
   });
 
   it('runs a happy-path validate of result = Manifold.cube()', async () => {
-    const { report } = await host.run({ mode: 'validate', code: 'result = Manifold.cube();' }, { timeoutMs: 15_000 });
+    const { report } = await defaultRunner.run(
+      { mode: 'validate', code: 'result = Manifold.cube();' },
+      { timeoutMs: 15_000 },
+    );
     expect(report.ok).toBe(true);
     expect(report.errors).toEqual([]);
     expect(report.hints.some(hint => hint.startsWith('GC_DELETE_FAILED:'))).toBe(false);
-    expect(host._currentThreadId()).toBeUndefined();
-    expect(host._lastThreadId()).toBeDefined();
+    expect(host._currentThreadId(defaultRunner)).toBeUndefined();
+    expect(host._lastThreadId(defaultRunner)).toBeDefined();
   }, 20_000);
 
   it('returns a TIMEOUT error when timeoutMs is exceeded', async () => {
@@ -106,7 +111,7 @@ describe.skipIf(skipUnlessBuilt)('runner host: run()', () => {
   // concurrent calls must complete in submission order with no overlap.
   it('serializes concurrent runs in submission order', async () => {
     const calls = [0, 1, 2, 3].map(i =>
-      host.run({ mode: 'validate', code: `result = Manifold.cube(${i + 1});` }, { timeoutMs: 15_000 }),
+      defaultRunner.run({ mode: 'validate', code: `result = Manifold.cube(${i + 1});` }, { timeoutMs: 15_000 }),
     );
     const results = await Promise.all(calls);
     for (const { report } of results) {
@@ -116,22 +121,25 @@ describe.skipIf(skipUnlessBuilt)('runner host: run()', () => {
   }, 60_000);
 
   it('uses a fresh disposable worker for every request', async () => {
-    const first = await host.run({ mode: 'validate', code: 'result = Manifold.cube();' }, { timeoutMs: 15_000 });
+    const first = await defaultRunner.run(
+      { mode: 'validate', code: 'result = Manifold.cube();' },
+      { timeoutMs: 15_000 },
+    );
     expect(first.report.ok).toBe(true);
-    const firstThreadId = host._lastThreadId();
+    const firstThreadId = host._lastThreadId(defaultRunner);
     expect(firstThreadId).toBeDefined();
-    expect(host._currentThreadId()).toBeUndefined();
+    expect(host._currentThreadId(defaultRunner)).toBeUndefined();
 
     let previousThreadId = firstThreadId;
     for (let i = 0; i < 3; i++) {
-      const { report } = await host.run(
+      const { report } = await defaultRunner.run(
         { mode: 'validate', code: `result = Manifold.sphere(${i + 1});` },
         { timeoutMs: 15_000 },
       );
       expect(report.ok).toBe(true);
-      expect(host._currentThreadId()).toBeUndefined();
-      expect(host._lastThreadId()).not.toBe(previousThreadId);
-      previousThreadId = host._lastThreadId();
+      expect(host._currentThreadId(defaultRunner)).toBeUndefined();
+      expect(host._lastThreadId(defaultRunner)).not.toBe(previousThreadId);
+      previousThreadId = host._lastThreadId(defaultRunner);
     }
   }, 60_000);
 
@@ -248,7 +256,7 @@ describe.skipIf(skipUnlessBuilt)('runner host: run()', () => {
   it('emits the millimetres reminder once per Runner despite disposable workers', async () => {
     const runner = new host.Runner();
     const otherRunner = new host.Runner();
-    const hasUnitsHint = (result: Awaited<ReturnType<HostModule['run']>>): boolean =>
+    const hasUnitsHint = (result: Awaited<ReturnType<InstanceType<HostModule['Runner']>['run']>>): boolean =>
       result.report.hints.some(hint => hint.includes('no intrinsic units'));
     try {
       const first = await runner.run({ mode: 'validate', code: 'result = Manifold.cube();' }, { timeoutMs: 15_000 });

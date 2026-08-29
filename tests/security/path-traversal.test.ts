@@ -26,7 +26,6 @@ interface PreviewModule {
     host?: string,
   ) => Promise<{
     url: string;
-    port: number;
     close(): Promise<void>;
   }>;
 }
@@ -98,8 +97,9 @@ describe.skipIf(skipUnlessBuilt)('SEC-4: static asset path traversal is blocked'
   beforeAll(async () => {
     const mod = (await import(pathToFileURL(distPreview).href)) as PreviewModule;
     const handle = await mod.startPreviewServer(47621, '127.0.0.1');
-    port = handle.port;
-    roomPath = new URL(handle.url).pathname;
+    const roomUrl = new URL(handle.url);
+    port = Number(roomUrl.port);
+    roomPath = roomUrl.pathname;
     stop = () => handle.close();
   }, 30_000);
 

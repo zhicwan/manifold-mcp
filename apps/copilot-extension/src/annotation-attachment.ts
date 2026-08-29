@@ -1,79 +1,72 @@
 import type { WireAnnotation } from '@manifold3d/protocol/wire/annotations.js';
-import type { JsonValue } from './sdk-boundary.js';
 
 export const ANNOTATION_ATTACHMENT_VERSION = 2 as const;
 export const MAX_ATTACHMENT_ANNOTATIONS = 128;
-export const MAX_ATTACHMENT_NOTE_LENGTH = 4_096;
+const MAX_ATTACHMENT_NOTE_LENGTH = 4_096;
 export const MAX_ATTACHMENT_SKETCH_POINTS = 8_192;
 export const MAX_ANNOTATION_ATTACHMENT_BYTES = 128 * 1024;
-export const MAX_ATTACHMENT_BATCH_ID_LENGTH = 64;
+const MAX_ATTACHMENT_BATCH_ID_LENGTH = 64;
 
-export type AnnotationAttachmentMode = 'annotation-batch' | 'location-selection';
+type AnnotationAttachmentMode = 'annotation-batch' | 'location-selection';
 
-interface AnnotationAttachmentBase {
+type AnnotationAttachmentBase = {
   version: typeof ANNOTATION_ATTACHMENT_VERSION;
   source: 'manifold3d-viewer';
   mode: AnnotationAttachmentMode;
   modelVersion: string;
   annotationRevision: number;
   annotations: AnnotationAttachmentItem[];
-}
+};
 
-export interface AnnotationBatchAttachmentPayload extends AnnotationAttachmentBase {
+export type AnnotationBatchAttachmentPayload = AnnotationAttachmentBase & {
   mode: 'annotation-batch';
   batchId: string;
   annotations: AnnotationBatchAttachmentItem[];
-}
+};
 
-export interface LocationSelectionAttachmentPayload extends AnnotationAttachmentBase {
+export type LocationSelectionAttachmentPayload = AnnotationAttachmentBase & {
   mode: 'location-selection';
   annotations: [LocationSelectionAttachmentItem];
-}
+};
 
 export type AnnotationAttachmentPayload = AnnotationBatchAttachmentPayload | LocationSelectionAttachmentPayload;
 
-export type AnnotationAttachmentItem = AnnotationBatchAttachmentItem | LocationSelectionAttachmentItem;
+type AnnotationAttachmentItem = AnnotationBatchAttachmentItem | LocationSelectionAttachmentItem;
 
-interface AnnotationAttachmentItemBase {
+type AnnotationAttachmentItemBase = {
   id: string;
   partLabel: string;
-}
+};
 
-export interface AnnotationBatchAttachmentItem extends AnnotationAttachmentItemBase {
+type AnnotationBatchAttachmentItem = AnnotationAttachmentItemBase & {
   note: string;
   selection: AnnotationSelection;
-}
+};
 
-export interface LocationSelectionAttachmentItem extends AnnotationAttachmentItemBase {
+type LocationSelectionAttachmentItem = AnnotationAttachmentItemBase & {
   selection: PointSelection | RegionSelection;
-}
+};
 
 type AnnotationSelection = PointSelection | RegionSelection | SketchSelection;
 
-interface PointSelection {
+type PointSelection = {
   kind: 'point';
   worldCoord: [number, number, number];
-}
+};
 
-interface RegionSelection {
+type RegionSelection = {
   kind: 'region';
   worldCoord: [number, number, number];
   triangleCount: number;
-}
+};
 
-interface SketchSelection {
+type SketchSelection = {
   kind: 'sketch';
   worldCoord: [number, number, number];
   viewPlane: NonNullable<WireAnnotation['viewPlane']>;
   planeOrigin: [number, number, number];
   strokes: Array<Array<[number, number]>>;
-}
-
-export interface BuiltAnnotationAttachment {
-  payload: AnnotationAttachmentPayload;
-  json: string;
-  bytes: Uint8Array;
-}
+};
 
 interface AnnotationAttachmentBuildBase {
   modelVersion: string;
@@ -81,7 +74,7 @@ interface AnnotationAttachmentBuildBase {
   annotations: readonly WireAnnotation[];
 }
 
-export type AnnotationAttachmentBuildInput =
+type AnnotationAttachmentBuildInput =
   | (AnnotationAttachmentBuildBase & {
       mode: 'annotation-batch';
       batchId: string;
@@ -90,12 +83,18 @@ export type AnnotationAttachmentBuildInput =
       mode: 'location-selection';
     });
 
-export function buildAnnotationAttachment(input: AnnotationAttachmentBuildInput): BuiltAnnotationAttachment {
+export function buildAnnotationAttachment(
+  input: Extract<AnnotationAttachmentBuildInput, { mode: 'annotation-batch' }>,
+): AnnotationBatchAttachmentPayload;
+export function buildAnnotationAttachment(
+  input: Extract<AnnotationAttachmentBuildInput, { mode: 'location-selection' }>,
+): LocationSelectionAttachmentPayload;
+export function buildAnnotationAttachment(input: AnnotationAttachmentBuildInput): AnnotationAttachmentPayload {
   const annotations =
     input.mode === 'annotation-batch'
       ? input.annotations.map((annotation, index) => sanitizeBatchAnnotation(annotation, index))
       : input.annotations.map((annotation, index) => sanitizeLocationAnnotation(annotation, index));
-  const payload = parseAnnotationAttachment({
+  return parseAnnotationAttachment({
     version: ANNOTATION_ATTACHMENT_VERSION,
     source: 'manifold3d-viewer',
     mode: input.mode,
@@ -104,8 +103,6 @@ export function buildAnnotationAttachment(input: AnnotationAttachmentBuildInput)
     annotations,
     ...(input.mode === 'annotation-batch' ? { batchId: input.batchId } : {}),
   });
-  const json = JSON.stringify(payload);
-  return { payload, json, bytes: new TextEncoder().encode(json) };
 }
 
 export function parseAnnotationAttachment(value: unknown): AnnotationAttachmentPayload {
@@ -183,10 +180,6 @@ export function isAnnotationAttachment(value: unknown): value is AnnotationAttac
   }
 }
 
-export function annotationPayloadAsJsonValue(payload: AnnotationAttachmentPayload): JsonValue {
-  return structuredClone(payload) as unknown as JsonValue;
-}
-
 function sanitizeBatchAnnotation(annotation: WireAnnotation, index: number): AnnotationBatchAttachmentItem {
   return {
     ...sanitizeAnnotationBase(annotation, index),
@@ -227,13 +220,14 @@ function sanitizeSelection(annotation: WireAnnotation, index: number): Annotatio
     return { kind: 'point', worldCoord };
   }
   if (annotation.kind === 'region') {
-    if (!Number.isSafeInteger(annotation.triCount) || (annotation.triCount ?? -1) < 0) {
+    const triangleCount = annotation.triCount;
+    if (triangleCount === undefined || !Number.isSafeInteger(triangleCount) || triangleCount < 0) {
       throw new Error(`${label} region triangle count is invalid.`);
     }
     return {
       kind: 'region',
       worldCoord,
-      triangleCount: annotation.triCount!,
+      triangleCount,
     };
   }
   if (!annotation.viewPlane || !annotation.planeOrigin || !annotation.strokes) {
@@ -358,16 +352,18 @@ function sanitizeStrokes(
 }
 
 function assertAttachmentByteLimit(value: unknown): void {
+  let serialized: string | undefined;
   try {
-    const bytes = new TextEncoder().encode(JSON.stringify(value));
-    if (bytes.byteLength > MAX_ANNOTATION_ATTACHMENT_BYTES) {
-      throw new Error(`Annotation attachment exceeds ${MAX_ANNOTATION_ATTACHMENT_BYTES} bytes.`);
-    }
+    serialized = JSON.stringify(value);
   } catch (error) {
-    if (error instanceof Error && error.message.startsWith('Annotation attachment exceeds')) {
-      throw error;
-    }
     throw new Error('Annotation attachment must be JSON serializable.', { cause: error });
+  }
+  if (serialized === undefined) {
+    throw new Error('Annotation attachment must be JSON serializable.');
+  }
+  const bytes = new TextEncoder().encode(serialized);
+  if (bytes.byteLength > MAX_ANNOTATION_ATTACHMENT_BYTES) {
+    throw new Error(`Annotation attachment exceeds ${MAX_ANNOTATION_ATTACHMENT_BYTES} bytes.`);
   }
 }
 

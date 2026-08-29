@@ -1,8 +1,8 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import type { ViewerModel } from '@manifold3d/protocol/wire/model.js';
 
 import { payloadToGeometry } from './mesh-bridge.js';
-import type { PreviewPayload } from '../types.js';
 import { ViewCube } from './view-cube.js';
 import { computeDesktopCameraClipping } from './camera-clipping.js';
 import { applyModelPresentation } from './model-presentation.js';
@@ -38,7 +38,7 @@ const THEME_COLORS: Record<
  * re-renders when something has changed (mesh swap, controls movement,
  * resize, render-mode change). Idle GPU usage is essentially zero.
  *
- * The control panel exposes a single rendering knob — the render mode:
+ * The Viewer UI exposes a single rendering knob — the render mode:
  * solid / wireframe / edges (line overlay) / xray (transparent
  * material, depth write off). Camera framing is driven by the corner
  * ViewCube widget plus the user's own OrbitControls drags.
@@ -173,7 +173,7 @@ export class Viewer {
   }
 
   private disposeResources(): void {
-    // VIE-3: dispose order matters. The view-cube gizmo's constructor
+    // Dispose order matters. The view-cube gizmo's constructor
     // attaches a 'change' listener AND a wheel/click hook to OrbitControls.
     // Its dispose() detaches those by calling controls.removeEventListener.
     // If we dispose controls first, that internal `controls` reference
@@ -226,7 +226,7 @@ export class Viewer {
     this.zoomDesktopCamera(1.25);
   }
 
-  setMesh(payload: PreviewPayload): THREE.Mesh {
+  setMesh(payload: ViewerModel): THREE.Mesh {
     if (this.mesh) {
       this.mesh.geometry.dispose();
       this.modelRoot.remove(this.mesh);

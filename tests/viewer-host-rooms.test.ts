@@ -162,8 +162,8 @@ describe('Viewer Host rooms', () => {
       b.socket.send(JSON.stringify(createAnnotationsMessage(versionB, 4, [annotation('b1', versionB, 'B')])));
       await eventually(() => roomA.getAnnotations().items.length === 1 && roomB.getAnnotations().items.length === 1);
 
-      expect(roomA.getLastModel()?.description).toBe('room A');
-      expect(roomB.getLastModel()?.description).toBe('room B');
+      expect(await a.messages.waitFor(message => message.kind === 'mesh')).toMatchObject({ description: 'room A' });
+      expect(await b.messages.waitFor(message => message.kind === 'mesh')).toMatchObject({ description: 'room B' });
       expect(roomA.getAnnotations()).toMatchObject({ revision: 1, items: [{ id: 'a1', note: 'A' }] });
       expect(roomB.getAnnotations()).toMatchObject({ revision: 4, items: [{ id: 'b1', note: 'B' }] });
     } finally {
@@ -362,7 +362,7 @@ describe('Viewer Host rooms', () => {
         id: 'apply-note',
         label: 'Apply note',
         icon: 'wand',
-        slot: 'annotation-footer',
+        slot: 'annotation-batch',
         tone: 'primary',
         requires: ['model', 'annotations'],
       },

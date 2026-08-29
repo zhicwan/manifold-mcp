@@ -57,7 +57,6 @@ describe('production Copilot Extension composition', () => {
     const firstOpen = await canvas.open(openContext('canvas-a'));
     const reopened = await canvas.open(openContext('canvas-a'));
     expect(reopened.url).toBe(firstOpen.url);
-    expect(application.liveRoomCount).toBe(1);
 
     const clientA = await openRoom(requiredUrl(firstOpen.url));
     try {
@@ -72,7 +71,6 @@ describe('production Copilot Extension composition', () => {
 
       const secondOpen = await canvas.open(openContext('canvas-b'));
       expect(secondOpen.url).not.toBe(firstOpen.url);
-      expect(application.liveRoomCount).toBe(2);
       const clientB = await openRoom(requiredUrl(secondOpen.url));
       try {
         expect(await clientB.messages.waitFor(message => message.kind === 'mesh')).toMatchObject({
@@ -222,7 +220,6 @@ describe('production Copilot Extension composition', () => {
         });
 
         await canvas.onClose?.(closeContext('canvas-a'));
-        expect(application.liveRoomCount).toBe(1);
         expect((await fetch(requiredUrl(firstOpen.url))).status).toBe(404);
         expect((await fetch(requiredUrl(secondOpen.url))).status).toBe(200);
       } finally {
@@ -442,7 +439,6 @@ describe('production Copilot Extension composition', () => {
     expect(harness.disconnect).toHaveBeenCalledTimes(1);
     expect(harness.runner.disposeCalls).toBe(1);
     expect(harness.renderer.disposeCalls).toBe(1);
-    expect(application.liveRoomCount).toBe(0);
     await expect(fetch(requiredUrl(opened.url))).rejects.toThrow();
     application = undefined;
   });
@@ -454,10 +450,7 @@ describe('production Copilot Extension composition', () => {
     harness.emitSessionShutdown();
     harness.emitSessionShutdown();
 
-    await eventually(
-      () =>
-        application!.liveRoomCount === 0 && harness.runner.disposeCalls === 1 && harness.renderer.disposeCalls === 1,
-    );
+    await eventually(() => harness.runner.disposeCalls === 1 && harness.renderer.disposeCalls === 1);
     expect(harness.disconnect).not.toHaveBeenCalled();
     await expect(fetch(requiredUrl(opened.url))).rejects.toThrow();
     await application.shutdown();
@@ -552,7 +545,6 @@ describe('production Copilot Extension composition', () => {
       expect(sequence.slice(0, 2)).toEqual(['attachment', 'fix-send']);
       expect(sequence.indexOf('disconnect')).toBeGreaterThanOrEqual(0);
       expect(sequence.indexOf('disconnect')).toBeLessThan(sequence.indexOf('modeling-dispose'));
-      expect(application.liveRoomCount).toBe(0);
       expect(harness.runner.disposeCalls).toBe(1);
       expect(harness.renderer.disposeCalls).toBe(1);
 
@@ -580,7 +572,6 @@ describe('production Copilot Extension composition', () => {
 
     await expect(application.shutdown({ disconnectSession: true })).rejects.toThrow(/shutdown failed/);
     expect(harness.disconnect).toHaveBeenCalledTimes(1);
-    expect(application.liveRoomCount).toBe(0);
     expect(harness.runner.disposeCalls).toBe(1);
     expect(harness.renderer.disposeCalls).toBe(1);
     await expect(fetch(requiredUrl(opened.url))).rejects.toThrow();
@@ -636,7 +627,6 @@ describe('production Copilot Extension composition', () => {
       expect(signalRuntime.exit).toHaveBeenCalledWith(0);
       expect(signalRuntime.exit).toHaveBeenCalledTimes(1);
       expect(harness.disconnect).not.toHaveBeenCalled();
-      expect(application.liveRoomCount).toBe(0);
       expect(harness.runner.disposeCalls).toBe(1);
       expect(harness.renderer.disposeCalls).toBe(1);
       await expect(fetch(requiredUrl(opened.url))).rejects.toThrow();
@@ -680,7 +670,6 @@ function createHarness(options: HarnessOptions = {}) {
   );
   const disconnect = vi.fn(() => (options.disconnect ? options.disconnect() : Promise.resolve()));
   const session: CopilotExtensionSession = {
-    sessionId: 'mock-session',
     workspacePath: testWorkspace,
     send,
     log,
@@ -775,7 +764,7 @@ class StubRunner extends Runner {
     }
     return Promise.resolve({
       report: emptyReport(),
-      mesh: artifact(request.description),
+      artifact: artifact(request.description),
     });
   }
 

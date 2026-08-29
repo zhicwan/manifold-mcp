@@ -168,7 +168,7 @@ describe('FlyoutController', () => {
 
   it('does not open or edit committed comments', () => {
     const id = seed(store, 'frozen');
-    store.freezeBatch();
+    store.freezeBatch(store.getDraftBatch().batchId);
 
     controller.open(id);
     controller.setDraft(id, 'changed');
@@ -186,7 +186,7 @@ describe('FlyoutController', () => {
     controller.open(id);
     controller.setDraft(id, 'in flight');
 
-    store.freezeBatch();
+    store.freezeBatch(store.getDraftBatch().batchId);
     controller.syncAlive(new Set());
 
     expect(controller.getExpandedId()).toBeNull();

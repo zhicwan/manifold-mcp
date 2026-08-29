@@ -9,8 +9,8 @@
  * when the feature resolver cannot provide a semantic label.
  */
 export type AnnotationKind = 'point' | 'region';
-export type AnnotationIntent = 'comment' | 'selection';
-export type AnnotationState = 'draft' | 'pending' | 'committed';
+/** Annotate collects a comment batch; select attaches one location per gesture. */
+export type MarkMode = 'orbit' | 'annotate' | 'select';
 
 interface SpatialAnnotation {
   id: string;
@@ -72,9 +72,5 @@ export type SelectionAnnotationInput = AnnotationGeometryInput;
 
 export interface CommentBatchSnapshot {
   batchId: string;
-  annotations: readonly CommentAnnotation[];
   annotationIds: readonly string[];
-  /** Alias retained for callers that prefer the shorter domain name. */
-  ids: readonly string[];
-  count: number;
 }

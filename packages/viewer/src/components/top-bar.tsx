@@ -14,7 +14,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { glass, glassPill } from '@/components/glass';
 import { cn } from '@/lib/utils';
 import { useViewerState, type ViewerApi } from '@/store';
-import type { PreviewPayload } from '@/types';
+import type { ViewerModel } from '@manifold3d/protocol/wire/model.js';
 
 /**
  * Top-right control cluster: everything that identifies the model or acts
@@ -91,7 +91,7 @@ function ActionsCluster({
   toolbarEnd,
   error,
 }: {
-  payload: PreviewPayload | null;
+  payload: ViewerModel | null;
   actionsEnabled: boolean;
   api: ViewerApi | null;
   toolbarEnd?: ReactNode;
@@ -173,7 +173,7 @@ function ActionsCluster({
   );
 }
 
-function ModelStats({ payload }: { payload: PreviewPayload }) {
+function ModelStats({ payload }: { payload: ViewerModel }) {
   const sx = payload.bboxMax[0] - payload.bboxMin[0];
   const sy = payload.bboxMax[1] - payload.bboxMin[1];
   const sz = payload.bboxMax[2] - payload.bboxMin[2];

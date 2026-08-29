@@ -1,12 +1,12 @@
 export const HOST_ACTION_PROTOCOL_VERSION = 1 as const;
 
 export const MAX_HOST_ACTIONS = 32;
-export const MAX_HOST_ACTION_ID_LENGTH = 64;
-export const MAX_HOST_ACTION_LABEL_LENGTH = 80;
+const MAX_HOST_ACTION_ID_LENGTH = 64;
+const MAX_HOST_ACTION_LABEL_LENGTH = 80;
 export const MAX_HOST_ACTION_MESSAGE_LENGTH = 512;
 export const MAX_HOST_ACTION_INPUT_BYTES = 16 * 1024;
 export const MAX_HOST_ACTION_ANNOTATION_IDS = 128;
-export const MAX_HOST_ACTION_JSON_DEPTH = 8;
+const MAX_HOST_ACTION_JSON_DEPTH = 8;
 
 export type HostActionProtocolVersion = typeof HOST_ACTION_PROTOCOL_VERSION;
 export type HostActionIcon = 'bot' | 'check' | 'download' | 'message' | 'play' | 'sparkles' | 'wand';
@@ -54,7 +54,7 @@ export interface HostActionStatusMessage {
   message?: string;
 }
 
-export interface HostActionRequestIdentity {
+interface HostActionRequestIdentity {
   requestId: string;
   actionId: string;
 }

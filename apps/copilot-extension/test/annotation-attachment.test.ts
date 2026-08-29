@@ -37,7 +37,7 @@ describe('AnnotationAttachment', () => {
       ],
     });
 
-    expect(attachment.payload).toEqual({
+    expect(attachment).toEqual({
       version: ANNOTATION_ATTACHMENT_VERSION,
       source: 'manifold3d-viewer',
       mode: 'annotation-batch',
@@ -76,8 +76,9 @@ describe('AnnotationAttachment', () => {
         },
       ],
     });
-    expect(attachment.json).not.toContain('clientId');
-    expect(parseAnnotationAttachment(JSON.parse(attachment.json))).toEqual(attachment.payload);
+    const json = JSON.stringify(attachment);
+    expect(json).not.toContain('clientId');
+    expect(parseAnnotationAttachment(JSON.parse(json))).toEqual(attachment);
   });
 
   it('builds exactly one point or region location without comment text or batchId', () => {
@@ -87,7 +88,7 @@ describe('AnnotationAttachment', () => {
       annotationRevision: 3,
       annotations: [annotation({ note: '' })],
     });
-    expect(point.payload).toEqual({
+    expect(point).toEqual({
       version: 2,
       source: 'manifold3d-viewer',
       mode: 'location-selection',
@@ -101,8 +102,9 @@ describe('AnnotationAttachment', () => {
         },
       ],
     });
-    expect(point.json).not.toContain('"note"');
-    expect(point.json).not.toContain('batchId');
+    const json = JSON.stringify(point);
+    expect(json).not.toContain('"note"');
+    expect(json).not.toContain('batchId');
 
     expect(
       buildAnnotationAttachment({
@@ -110,7 +112,7 @@ describe('AnnotationAttachment', () => {
         modelVersion: 'model-v2',
         annotationRevision: 3,
         annotations: [annotation({ id: 'region', kind: 'region', triCount: 4, note: '' })],
-      }).payload.annotations[0],
+      }).annotations[0],
     ).toMatchObject({ selection: { kind: 'region', triangleCount: 4 } });
   });
 
@@ -121,7 +123,7 @@ describe('AnnotationAttachment', () => {
       modelVersion: 'model-v1',
       annotationRevision: 1,
       annotations: [annotation()],
-    }).payload;
+    });
     expect(isAnnotationAttachment(validBatch)).toBe(true);
     expect(isAnnotationAttachment({ ...validBatch, version: 1 })).toBe(false);
     expect(isAnnotationAttachment({ ...validBatch, extra: true })).toBe(false);
@@ -209,7 +211,7 @@ describe('AnnotationAttachment', () => {
           modelVersion: 'model-v1',
           annotationRevision: 1,
           annotations: [annotation()],
-        }).payload,
+        }),
         annotations: [
           {
             id: 'point',

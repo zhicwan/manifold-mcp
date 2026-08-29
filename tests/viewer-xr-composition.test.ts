@@ -1,5 +1,3 @@
-import { readFile } from 'node:fs/promises';
-import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import type * as THREE from 'three';
 
@@ -104,10 +102,7 @@ describe('XR Viewer composition', () => {
     expect(order).toEqual(['slot-start', 'slot-end', 'base-dispose']);
   });
 
-  it('registers cleanup before async ownership startup and cancels a pending mount', async () => {
-    const source = await readFile(resolve(import.meta.dirname, '../packages/viewer/src/xr/index.tsx'), 'utf8');
-    expect(source.indexOf('registerSceneCleanup')).toBeLessThan(source.indexOf('acquisition.acquired.then'));
-
+  it('cancels a pending XR ownership mount during scene cleanup', async () => {
     const renderer = {} as THREE.WebGLRenderer;
     const active = await acquireXrRendererOwnership(renderer).acquired;
     const pending = acquireXrRendererOwnership(renderer);

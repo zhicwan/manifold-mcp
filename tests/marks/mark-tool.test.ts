@@ -18,8 +18,9 @@ vi.mock('../../packages/viewer/src/marks/picker.js', async () => {
 });
 
 import { AnnotationStore } from '../../packages/viewer/src/marks/annotation-store.js';
-import type { FlyoutLayer } from '../../packages/viewer/src/marks/flyout.js';
-import { MarkTool, type MarkToolMode } from '../../packages/viewer/src/marks/mark-tool.js';
+import type { FlyoutLayer } from '../../packages/viewer/src/marks/flyout/index.js';
+import { MarkTool } from '../../packages/viewer/src/marks/mark-tool.js';
+import type { MarkMode } from '../../packages/viewer/src/marks/types.js';
 
 type EventListener = (event: Record<string, unknown>) => void;
 
@@ -63,12 +64,12 @@ class FakeElement extends FakeEventTarget {
   }
 }
 
-function mouse(clientX: number, clientY: number, options: { ctrlKey?: boolean } = {}): Record<string, unknown> {
+function mouse(clientX: number, clientY: number): Record<string, unknown> {
   return {
     button: 0,
     clientX,
     clientY,
-    ctrlKey: options.ctrlKey ?? false,
+    ctrlKey: false,
     metaKey: false,
     target: null,
     preventDefault: vi.fn(),
@@ -88,6 +89,7 @@ describe('MarkTool annotate/select gestures', () => {
     dismissAll: ReturnType<typeof vi.fn>;
   };
   let controls: { enabled: boolean };
+  let modeChanged: ReturnType<typeof vi.fn<(mode: MarkMode) => void>>;
   let selectionCreated: ReturnType<typeof vi.fn<(id: string) => void>>;
   let tool: MarkTool;
 
@@ -103,6 +105,7 @@ describe('MarkTool annotate/select gestures', () => {
       dismissAll: vi.fn(),
     };
     controls = { enabled: true };
+    modeChanged = vi.fn();
     selectionCreated = vi.fn();
     vi.stubGlobal('window', fakeWindow);
     vi.stubGlobal('document', {
@@ -126,7 +129,7 @@ describe('MarkTool annotate/select gestures', () => {
       flyouts as unknown as FlyoutLayer,
       () => ({}) as THREE.Mesh,
       () => null,
-      undefined,
+      modeChanged,
       selectionCreated,
     );
   });
@@ -158,40 +161,28 @@ describe('MarkTool annotate/select gestures', () => {
     }
   });
 
-  it('preserves Ctrl click and drag as comment gestures from orbit mode', () => {
-    const modeChanges: MarkToolMode[] = [];
-    tool.dispose();
-    tool = new MarkTool(
-      overlay as unknown as HTMLElement,
-      canvas as unknown as HTMLCanvasElement,
-      new THREE.PerspectiveCamera(),
-      controls as unknown as OrbitControls,
-      store,
-      flyouts as unknown as FlyoutLayer,
-      () => ({}) as THREE.Mesh,
-      () => null,
-      mode => modeChanges.push(mode),
-      selectionCreated,
-    );
-    canvas.emit('mousedown', mouse(10, 10, { ctrlKey: true }));
-    fakeWindow.emit('mousemove', mouse(30, 30, { ctrlKey: true }));
-    fakeWindow.emit('mouseup', mouse(30, 30, { ctrlKey: true }));
-
-    expect(store.list()[0]).toMatchObject({ kind: 'region', intent: 'comment', state: 'draft' });
-    expect(flyouts.openExpanded).toHaveBeenCalledOnce();
-    expect(tool.getMode()).toBe('annotate');
-    expect(modeChanges).toEqual(['annotate']);
-  });
-
-  it('leaves plain orbit gestures to OrbitControls', () => {
+  it('does not let modifier keys bypass orbit mode', () => {
     canvas.emit('mousedown', mouse(10, 10));
     fakeWindow.emit('mouseup', mouse(10, 10));
+    canvas.emit('mousedown', { ...mouse(10, 10), ctrlKey: true });
+    fakeWindow.emit('mouseup', { ...mouse(10, 10), ctrlKey: true });
 
     expect(store.list()).toEqual([]);
     expect(controls.enabled).toBe(true);
   });
 
-  function performGesture(mode: Exclude<MarkToolMode, 'orbit'>, drag: boolean): void {
+  it('returns an armed tool to orbit on Escape', () => {
+    tool.setMode('annotate');
+    expect(body.dataset.markMode).toBe('annotate');
+
+    fakeWindow.emit('keydown', { key: 'Escape', target: null });
+
+    expect(body.dataset.markMode).toBeUndefined();
+    expect(modeChanged).toHaveBeenNthCalledWith(1, 'annotate');
+    expect(modeChanged).toHaveBeenNthCalledWith(2, 'orbit');
+  });
+
+  function performGesture(mode: Exclude<MarkMode, 'orbit'>, drag: boolean): void {
     tool.setMode(mode);
     canvas.emit('mousedown', mouse(10, 10));
     if (drag) {

@@ -26,7 +26,7 @@ describe('MarkerRenderer transaction styles', () => {
       expect(draftMaterial.color.getHex()).toBe(0xff3030);
       expect(draftMaterial.opacity).toBe(0.95);
 
-      store.freezeBatch();
+      store.freezeBatch(store.getDraftBatch().batchId);
       const committedMaterial = markerMaterial(scene);
       expect(committedMaterial).not.toBe(draftMaterial);
       expect(committedMaterial.color.getHex()).toBe(0x94a3b8);
@@ -49,7 +49,7 @@ describe('MarkerRenderer transaction styles', () => {
       });
       expect(markerMaterial(scene).color.getHex()).toBe(0x22d3ee);
 
-      store.commitPendingSelection(selection.id);
+      store.commitSelection(selection.id);
       expect(markerMaterial(scene).color.getHex()).toBe(0x3b82f6);
       expect(markerMaterial(scene).opacity).toBe(0.52);
     } finally {

@@ -16,18 +16,20 @@ const skipUnlessBuilt = !existsSync(workerJs) || !existsSync(distHost) || proces
 
 type HostModule = typeof HostModuleNs;
 let host: HostModule;
+let runner: InstanceType<HostModule['Runner']>;
 
 describe.skipIf(skipUnlessBuilt)('SEC-1: worker sandbox scrubs dangerous globals', () => {
   beforeAll(async () => {
     host = (await import(pathToFileURL(distHost).href)) as HostModule;
+    runner = new host.Runner();
   });
 
   afterAll(async () => {
-    await host.shutdown();
+    await runner.dispose();
   });
 
   it('rejects direct dynamic import with a clear sandbox diagnostic', async () => {
-    const { report } = await host.run(
+    const { report } = await runner.run(
       { mode: 'validate', code: `void import('node:fs'); result = Manifold.cube();` },
       { timeoutMs: 15_000 },
     );
@@ -41,7 +43,7 @@ describe.skipIf(skipUnlessBuilt)('SEC-1: worker sandbox scrubs dangerous globals
       void importer();
       result = Manifold.cube();
     `;
-    const { report } = await host.run({ mode: 'validate', code }, { timeoutMs: 15_000 });
+    const { report } = await runner.run({ mode: 'validate', code }, { timeoutMs: 15_000 });
     expect(report.ok).toBe(false);
     expect(report.errors.some(error => error.message.includes('dynamic-code constructors'))).toBe(true);
   }, 20_000);
@@ -64,7 +66,7 @@ describe.skipIf(skipUnlessBuilt)('SEC-1: worker sandbox scrubs dangerous globals
       }
       result = Manifold.cube([blocked ? 2 : 1, 1, 1], true);
     `;
-    const { report } = await host.run({ mode: 'validate', code }, { timeoutMs: 15_000 });
+    const { report } = await runner.run({ mode: 'validate', code }, { timeoutMs: 15_000 });
     expect(report.ok, JSON.stringify(report.errors)).toBe(true);
     expect(report.stats?.bbox?.size?.[0]).toBe(2);
   }, 20_000);
@@ -81,7 +83,7 @@ describe.skipIf(skipUnlessBuilt)('SEC-1: worker sandbox scrubs dangerous globals
       const blocked = prototypes.every((prototype) => Reflect.get(prototype, key) === undefined);
       result = Manifold.cube([blocked ? 2 : 1, 1, 1], true);
     `;
-    const { report } = await host.run({ mode: 'validate', code }, { timeoutMs: 15_000 });
+    const { report } = await runner.run({ mode: 'validate', code }, { timeoutMs: 15_000 });
     expect(report.ok, JSON.stringify(report.errors)).toBe(true);
     expect(report.stats?.bbox?.size?.[0]).toBe(2);
   }, 20_000);
@@ -104,7 +106,7 @@ describe.skipIf(skipUnlessBuilt)('SEC-1: worker sandbox scrubs dangerous globals
       }
       result = Manifold.cube([frozen ? 2 : 1, 1, 1], true);
     `;
-    const { report } = await host.run({ mode: 'validate', code }, { timeoutMs: 15_000 });
+    const { report } = await runner.run({ mode: 'validate', code }, { timeoutMs: 15_000 });
     expect(report.ok, JSON.stringify(report.errors)).toBe(true);
     expect(report.stats?.bbox?.size?.[0]).toBe(2);
   }, 20_000);
@@ -153,7 +155,7 @@ describe.skipIf(skipUnlessBuilt)('SEC-1: worker sandbox scrubs dangerous globals
         ? Manifold.cube([2, 2, 2], true)
         : Manifold.cube([9, 9, 9], true);
     `;
-    const { report } = await host.run({ mode: 'validate', code }, { timeoutMs: 15_000 });
+    const { report } = await runner.run({ mode: 'validate', code }, { timeoutMs: 15_000 });
     expect(report.ok, JSON.stringify(report.errors)).toBe(true);
     expect(report.stats?.bbox?.size).toEqual([2, 2, 2]);
     expect(report.hints.some(hint => hint.startsWith('GC_DELETE_FAILED:'))).toBe(false);

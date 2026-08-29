@@ -7,8 +7,7 @@
  *   2. Uint32 triangle vertex indices
  *   3. Uint32 per-triangle feature ids, when announced by the header
  *
- * Headers without protocolVersion are accepted as the immediately preceding
- * legacy format. A present version must always be supported.
+ * Every JSON frame carries an explicit protocol version.
  */
 
 export const VIEWER_PROTOCOL_VERSION = 1 as const;
@@ -25,9 +24,6 @@ export interface ViewerFeature {
   /** 3x4 column-major local-to-world transform. */
   transform: number[];
 }
-
-/** Backwards-compatible name for code that still calls the wire projection a WireFeature. */
-export type WireFeature = ViewerFeature;
 
 /** Server-side model projection. ArrayBuffers are sent as binary WS frames. */
 export interface ViewerModelFrame {
@@ -65,8 +61,7 @@ export interface ViewerModel {
 
 export interface ModelHeader {
   kind: 'mesh';
-  /** Missing only for the immediately preceding legacy wire format. */
-  protocolVersion?: ViewerProtocolVersion;
+  protocolVersion: ViewerProtocolVersion;
   description?: string;
   numProp: number;
   triangles: number;
@@ -82,20 +77,18 @@ export interface ModelHeader {
 
 export interface ModelVersionMessage {
   kind: 'model_version';
-  /** Missing only for the immediately preceding legacy wire format. */
-  protocolVersion?: ViewerProtocolVersion;
+  protocolVersion: ViewerProtocolVersion;
   modelVersion: string;
 }
 
 export interface HelloMessage {
   kind: 'hello';
-  /** Missing only for the immediately preceding legacy wire format. */
-  protocolVersion?: ViewerProtocolVersion;
+  protocolVersion: ViewerProtocolVersion;
   clientId: string;
   /** Rotating, room-bound capability used to reclaim this client after reconnect. */
-  resumeToken?: string;
+  resumeToken: string;
   /** True when the supplied resume token reclaimed an existing room client. */
-  resumed?: boolean;
+  resumed: boolean;
   /** Last annotation revision retained for this resumed client. */
   annotationRevision?: number;
 }
@@ -112,11 +105,6 @@ export interface ViewerModelBinaryFrames {
   vertProperties: ArrayBuffer;
   triVerts: ArrayBuffer;
   triFeatureIds?: ArrayBuffer;
-}
-
-export interface ProtocolGuardOptions {
-  /** Defaults to true to interoperate with the immediately preceding server. */
-  allowLegacy?: boolean;
 }
 
 export class ViewerProtocolError extends Error {
@@ -150,18 +138,19 @@ export function createModelVersionMessage(modelVersion: string): ModelVersionMes
 
 export function createHelloMessage(
   clientId: string,
-  resumeToken?: string,
-  resumed?: boolean,
+  resumeToken: string,
+  resumed: boolean,
   annotationRevision?: number,
 ): HelloMessage {
   const message = {
     kind: 'hello' as const,
     protocolVersion: VIEWER_PROTOCOL_VERSION,
     clientId,
-    ...(resumeToken !== undefined ? { resumeToken, resumed: resumed ?? false } : {}),
+    resumeToken,
+    resumed,
     ...(annotationRevision !== undefined ? { annotationRevision } : {}),
   };
-  return parseHelloMessage(message, { allowLegacy: false });
+  return parseHelloMessage(message);
 }
 
 export function createResumeTokenAckMessage(resumeToken: string): ResumeTokenAckMessage {
@@ -172,13 +161,31 @@ export function createResumeTokenAckMessage(resumeToken: string): ResumeTokenAck
   });
 }
 
-export function parseModelHeader(value: unknown, options: ProtocolGuardOptions = {}): ModelHeader {
+export function parseModelHeader(value: unknown): ModelHeader {
   const record = requireRecord(value, 'model header');
+  requireOnlyKeys(
+    record,
+    [
+      'kind',
+      'protocolVersion',
+      'description',
+      'numProp',
+      'triangles',
+      'vertices',
+      'features',
+      'hasTriFeatureIds',
+      'volume',
+      'surfaceArea',
+      'genus',
+      'bboxMin',
+      'bboxMax',
+    ],
+    'Model header',
+  );
   if (record.kind !== 'mesh') {
     throw new ViewerProtocolError('Model header kind must be "mesh".');
   }
-  const protocolVersion = parseProtocolVersion(record, options);
-  const legacy = protocolVersion === undefined;
+  requireProtocolVersion(record.protocolVersion);
   const description = optionalString(record.description, 'description');
   const numProp = nonnegativeInteger(record.numProp, 'numProp');
   if (numProp < 3) {
@@ -189,22 +196,12 @@ export function parseModelHeader(value: unknown, options: ProtocolGuardOptions =
   ensureSafeProduct(vertices, numProp, 'vertices * numProp');
   ensureSafeProduct(triangles, 3, 'triangles * 3');
 
-  let features: ViewerFeature[];
-  if (record.features === undefined && legacy) {
-    features = [];
-  } else if (!Array.isArray(record.features) || !record.features.every(isViewerFeature)) {
+  if (!Array.isArray(record.features) || !record.features.every(isViewerFeature)) {
     throw new ViewerProtocolError('Model header features must be an array of valid viewer features.');
-  } else {
-    features = record.features;
   }
 
-  let hasTriFeatureIds: boolean;
-  if (record.hasTriFeatureIds === undefined && legacy) {
-    hasTriFeatureIds = false;
-  } else if (typeof record.hasTriFeatureIds !== 'boolean') {
+  if (typeof record.hasTriFeatureIds !== 'boolean') {
     throw new ViewerProtocolError('Model header hasTriFeatureIds must be a boolean.');
-  } else {
-    hasTriFeatureIds = record.hasTriFeatureIds;
   }
 
   const volume = nonnegativeFiniteNumber(record.volume, 'volume');
@@ -220,13 +217,13 @@ export function parseModelHeader(value: unknown, options: ProtocolGuardOptions =
 
   return {
     kind: 'mesh',
-    ...(protocolVersion !== undefined ? { protocolVersion } : {}),
+    protocolVersion: VIEWER_PROTOCOL_VERSION,
     ...(description !== undefined ? { description } : {}),
     numProp,
     triangles,
     vertices,
-    features,
-    hasTriFeatureIds,
+    features: record.features,
+    hasTriFeatureIds: record.hasTriFeatureIds,
     volume,
     surfaceArea,
     genus,
@@ -235,70 +232,75 @@ export function parseModelHeader(value: unknown, options: ProtocolGuardOptions =
   };
 }
 
-export function isModelHeader(value: unknown, options?: ProtocolGuardOptions): value is ModelHeader {
+export function isModelHeader(value: unknown): value is ModelHeader {
   try {
-    parseModelHeader(value, options);
+    parseModelHeader(value);
     return true;
   } catch {
     return false;
   }
 }
 
-export function parseModelVersionMessage(value: unknown, options: ProtocolGuardOptions = {}): ModelVersionMessage {
+export function parseModelVersionMessage(value: unknown): ModelVersionMessage {
   const record = requireRecord(value, 'model version message');
+  requireOnlyKeys(record, ['kind', 'protocolVersion', 'modelVersion'], 'Model version message');
   if (record.kind !== 'model_version') {
     throw new ViewerProtocolError('Model version message kind must be "model_version".');
   }
-  const protocolVersion = parseProtocolVersion(record, options);
+  requireProtocolVersion(record.protocolVersion);
   const modelVersion = nonemptyString(record.modelVersion, 'modelVersion');
   return {
     kind: 'model_version',
-    ...(protocolVersion !== undefined ? { protocolVersion } : {}),
+    protocolVersion: VIEWER_PROTOCOL_VERSION,
     modelVersion,
   };
 }
 
-export function isModelVersionMessage(value: unknown, options?: ProtocolGuardOptions): value is ModelVersionMessage {
+export function isModelVersionMessage(value: unknown): value is ModelVersionMessage {
   try {
-    parseModelVersionMessage(value, options);
+    parseModelVersionMessage(value);
     return true;
   } catch {
     return false;
   }
 }
 
-export function parseHelloMessage(value: unknown, options: ProtocolGuardOptions = {}): HelloMessage {
+export function parseHelloMessage(value: unknown): HelloMessage {
   const record = requireRecord(value, 'hello message');
+  requireOnlyKeys(
+    record,
+    ['kind', 'protocolVersion', 'clientId', 'resumeToken', 'resumed', 'annotationRevision'],
+    'Hello message',
+  );
   if (record.kind !== 'hello') {
     throw new ViewerProtocolError('Hello message kind must be "hello".');
   }
-  const protocolVersion = parseProtocolVersion(record, options);
+  requireProtocolVersion(record.protocolVersion);
   const clientId = nonemptyString(record.clientId, 'clientId');
-  let resumeToken: string | undefined;
-  let resumed: boolean | undefined;
+  const resumeToken = safeIdentifier(record.resumeToken, 'resumeToken', 128);
+  if (typeof record.resumed !== 'boolean') {
+    throw new ViewerProtocolError('Hello message resumed must be a boolean.');
+  }
   const annotationRevision =
     record.annotationRevision === undefined
       ? undefined
       : nonnegativeInteger(record.annotationRevision, 'annotationRevision');
-  if (record.resumeToken !== undefined || record.resumed !== undefined) {
-    resumeToken = safeIdentifier(record.resumeToken, 'resumeToken', 128);
-    if (typeof record.resumed !== 'boolean') {
-      throw new ViewerProtocolError('Hello message resumed must be a boolean when resumeToken is present.');
-    }
-    resumed = record.resumed;
+  if (annotationRevision !== undefined && record.resumed !== true) {
+    throw new ViewerProtocolError('Hello message annotationRevision requires a resumed client.');
   }
   return {
     kind: 'hello',
-    ...(protocolVersion !== undefined ? { protocolVersion } : {}),
+    protocolVersion: VIEWER_PROTOCOL_VERSION,
     clientId,
-    ...(resumeToken !== undefined && resumed !== undefined ? { resumeToken, resumed } : {}),
+    resumeToken,
+    resumed: record.resumed,
     ...(annotationRevision !== undefined ? { annotationRevision } : {}),
   };
 }
 
-export function isHelloMessage(value: unknown, options?: ProtocolGuardOptions): value is HelloMessage {
+export function isHelloMessage(value: unknown): value is HelloMessage {
   try {
-    parseHelloMessage(value, options);
+    parseHelloMessage(value);
     return true;
   } catch {
     return false;
@@ -319,7 +321,7 @@ export function parseResumeTokenAckMessage(value: unknown): ResumeTokenAckMessag
   if (record.kind !== 'resume_token_ack') {
     throw new ViewerProtocolError('Resume token acknowledgement kind must be "resume_token_ack".');
   }
-  parseProtocolVersion(record, { allowLegacy: false });
+  requireProtocolVersion(record.protocolVersion);
   const resumeToken = safeIdentifier(record.resumeToken, 'resumeToken', 128);
   return {
     kind: 'resume_token_ack',
@@ -402,35 +404,40 @@ export function decodeViewerModel(header: ModelHeader, frames: ViewerModelBinary
 
 /** Validate a server-side frame without copying its geometry buffers. */
 export function assertViewerModelFrame(frame: ViewerModelFrame): void {
-  const header = parseModelHeader(createModelHeader(frame), { allowLegacy: false });
+  const header = parseModelHeader(createModelHeader(frame));
   assertModelBinaryFrame(header, 'vertProperties', frame.vertProperties);
   assertModelBinaryFrame(header, 'triVerts', frame.triVerts);
   assertModelBinaryFrame(header, 'triFeatureIds', frame.triFeatureIds);
 }
 
-function parseProtocolVersion(
-  record: Record<string, unknown>,
-  { allowLegacy = true }: ProtocolGuardOptions,
-): ViewerProtocolVersion | undefined {
-  if (record.protocolVersion === undefined) {
-    if (allowLegacy) {
-      return undefined;
-    }
+function requireProtocolVersion(value: unknown): void {
+  if (value === undefined) {
     throw new ViewerProtocolError('protocolVersion is required.');
   }
-  if (record.protocolVersion !== VIEWER_PROTOCOL_VERSION) {
+  if (value !== VIEWER_PROTOCOL_VERSION) {
     throw new ViewerProtocolError(
-      `Unsupported viewer protocolVersion ${String(record.protocolVersion)}; expected ${VIEWER_PROTOCOL_VERSION}.`,
+      `Unsupported viewer protocolVersion ${String(value)}; expected ${VIEWER_PROTOCOL_VERSION}.`,
     );
   }
-  return VIEWER_PROTOCOL_VERSION;
 }
 
 function requireRecord(value: unknown, label: string): Record<string, unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     throw new ViewerProtocolError(`${label} must be an object.`);
   }
+  const prototype = Object.getPrototypeOf(value);
+  if (prototype !== Object.prototype && prototype !== null) {
+    throw new ViewerProtocolError(`${label} must be a plain object.`);
+  }
   return value as Record<string, unknown>;
+}
+
+function requireOnlyKeys(record: Record<string, unknown>, allowed: readonly string[], label: string): void {
+  const allowedSet = new Set(allowed);
+  const unexpected = Object.keys(record).find(key => !allowedSet.has(key));
+  if (unexpected !== undefined) {
+    throw new ViewerProtocolError(`${label} contains unsupported field "${unexpected}".`);
+  }
 }
 
 function optionalString(value: unknown, label: string): string | undefined {

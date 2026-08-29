@@ -15,6 +15,7 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { WebSocket } from 'ws';
 
+import { createAnnotationsMessage } from '../packages/protocol/src/wire/annotations.js';
 import type { ViewerModelFrame } from '../packages/protocol/src/wire/model.js';
 
 import type * as PreviewModuleNs from '../packages/viewer-host/src/preview/preview-server.js';
@@ -148,10 +149,8 @@ describe.skipIf(skipUnlessBuilt)('preview server: multi-tab annotation merge', (
       expect(a.modelVersion).toBe(b.modelVersion);
 
       tabA.send(
-        JSON.stringify({
-          kind: 'annotations',
-          modelVersion: a.modelVersion,
-          items: [
+        JSON.stringify(
+          createAnnotationsMessage(a.modelVersion, 1, [
             {
               id: 'A-1',
               modelVersion: a.modelVersion,
@@ -160,14 +159,12 @@ describe.skipIf(skipUnlessBuilt)('preview server: multi-tab annotation merge', (
               note: 'note from tab A',
               worldCoord: [1, 0, 0],
             },
-          ],
-        }),
+          ]),
+        ),
       );
       tabB.send(
-        JSON.stringify({
-          kind: 'annotations',
-          modelVersion: b.modelVersion,
-          items: [
+        JSON.stringify(
+          createAnnotationsMessage(b.modelVersion, 1, [
             {
               id: 'B-1',
               modelVersion: b.modelVersion,
@@ -185,8 +182,8 @@ describe.skipIf(skipUnlessBuilt)('preview server: multi-tab annotation merge', (
               worldCoord: [0, 0, 1],
               triCount: 1,
             },
-          ],
-        }),
+          ]),
+        ),
       );
 
       // Give the server a moment to process both messages.
@@ -217,10 +214,8 @@ describe.skipIf(skipUnlessBuilt)('preview server: multi-tab annotation merge', (
     const tabA = a.ws;
     try {
       tabA.send(
-        JSON.stringify({
-          kind: 'annotations',
-          modelVersion: a.modelVersion,
-          items: [
+        JSON.stringify(
+          createAnnotationsMessage(a.modelVersion, 1, [
             {
               id: 'X',
               modelVersion: a.modelVersion,
@@ -229,8 +224,8 @@ describe.skipIf(skipUnlessBuilt)('preview server: multi-tab annotation merge', (
               note: 'before push',
               worldCoord: [0, 0, 0],
             },
-          ],
-        }),
+          ]),
+        ),
       );
       await new Promise<void>(resolve => setTimeout(resolve, 50));
       expect(handle.getAnnotations().items.length).toBe(1);

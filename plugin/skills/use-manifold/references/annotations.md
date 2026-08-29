@@ -1,9 +1,12 @@
 # Annotations (user "marks")
 
-The viewer lets the user pin spatial annotations on the rendered model:
+Choose **Annotate** in the viewer, then add spatial comments directly on the
+rendered model:
 
-- **Ctrl+click** drops a red point pin
-- **Ctrl+drag** highlights a region (rectangle frustum select)
+- **Click** drops a point pin and opens its comment editor.
+- **Drag** highlights a region and opens its comment editor.
+- **Done** commits the current batch for `get_annotations`; **Cancel** discards
+  the current draft batch.
 
 Each annotation has:
 
@@ -81,7 +84,7 @@ edit to see whether the user has left feedback. The call is cheap
   to leak into a subsequent run.
 - Annotations live in the viewer's memory only — they are not
   persisted across browser refresh.
-- The user can also delete individual annotations from the sidebar.
+- Draft annotations can be edited or deleted from their on-model flyouts.
 
 ## Recommended workflow when responding to marks
 

@@ -7,7 +7,7 @@
  */
 import { type Report, type Stats, ERROR_STATUS_TO_CODE, addError, addHint, addWarning } from './report.js';
 
-export interface GeomCheckInput {
+interface GeomCheckInput {
   status: string; // ErrorStatus from manifold
   isEmpty: boolean;
   triangles: number;
@@ -19,10 +19,10 @@ export interface GeomCheckInput {
 }
 
 /** Surfaced in script-conventions.md and validation-report.md — keep docs in sync. */
-export const TRIANGLE_BUDGET = 500_000;
-export const BBOX_MIN_MM = 0.1;
+const TRIANGLE_BUDGET = 500_000;
+const BBOX_MIN_MM = 0.1;
 /** Surfaced in script-conventions.md and validation-report.md — keep docs in sync. */
-export const BBOX_MAX_MM = 500;
+const BBOX_MAX_MM = 500;
 
 /** Stage 3+4: geometric / print readiness checks. Mutates `report`. */
 export function runGeometryStage(report: Report, info: GeomCheckInput): Stats {

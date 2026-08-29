@@ -11,6 +11,8 @@ import {
 import type { HelloMessage } from '@manifold3d/protocol/wire/model.js';
 import type { ConnectionStatus } from '../transport/ws-client.js';
 
+export const LOCATION_SELECTION_ACTION_ID = 'attach-location-selection';
+
 export type HostActionsProtocolState = 'awaiting-manifest' | 'ready' | 'error';
 
 export interface HostActionsSnapshot {
@@ -113,9 +115,7 @@ export class HostActionsClient {
       return;
     }
     this.update({ ...this.snapshot, clientId: message.clientId });
-    if (resumed) {
-      this.retransmitNonterminalInvocations();
-    }
+    this.retransmitNonterminalInvocations();
   }
 
   receiveManifest(manifest: HostActionsManifestMessage): void {
@@ -278,6 +278,10 @@ export function hasPendingHostActionRequest(snapshot: HostActionsSnapshot, actio
   return Object.values(snapshot.statuses).some(
     status => status.actionId === actionId && (status.state === 'accepted' || status.state === 'running'),
   );
+}
+
+export function supportsLocationSelection(actions: readonly Pick<HostActionDescriptor, 'id'>[]): boolean {
+  return actions.some(action => action.id === LOCATION_SELECTION_ACTION_ID);
 }
 
 export function hostActionDisabledReason(

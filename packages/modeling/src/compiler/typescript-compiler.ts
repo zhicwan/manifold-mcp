@@ -6,7 +6,7 @@ import { sandboxAmbientDeclarations } from '../sandbox/ambient-types.js';
 const snippetFileName = '/manifold-snippet.ts';
 const ambientFileName = '/manifold-sandbox.d.ts';
 
-export interface TypecheckResult {
+interface TypecheckResult {
   ok: boolean;
   js?: string;
   /**
@@ -18,7 +18,7 @@ export interface TypecheckResult {
   issues: Issue[];
 }
 
-export interface CompileOptions {
+interface CompileOptions {
   /**
    * When true, no `Issue.snippet` field is emitted on diagnostics. Used when
    * the source was loaded via `filePath` so reports cannot leak file

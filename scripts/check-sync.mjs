@@ -5,6 +5,8 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import process from 'node:process';
 
+import ts from 'typescript';
+
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, '..');
 const publicPackagePath = 'packages/manifold3d-mcp/package.json';
@@ -112,89 +114,46 @@ function checkVersions() {
   }
 }
 
-function findMatchingBracket(source, openIndex) {
-  let depth = 0;
-  let quote;
-  let escaped = false;
-  let lineComment = false;
-  let blockComment = false;
-
-  for (let index = openIndex; index < source.length; index++) {
-    const char = source[index];
-    const next = source[index + 1];
-
-    if (lineComment) {
-      if (char === '\n') {
-        lineComment = false;
-      }
-      continue;
-    }
-    if (blockComment) {
-      if (char === '*' && next === '/') {
-        blockComment = false;
-        index++;
-      }
-      continue;
-    }
-    if (quote) {
-      if (escaped) {
-        escaped = false;
-      } else if (char === '\\') {
-        escaped = true;
-      } else if (char === quote) {
-        quote = undefined;
-      }
-      continue;
-    }
-
-    if (char === '/' && next === '/') {
-      lineComment = true;
-      index++;
-      continue;
-    }
-    if (char === '/' && next === '*') {
-      blockComment = true;
-      index++;
-      continue;
-    }
-    if (char === "'" || char === '"' || char === '`') {
-      quote = char;
-      continue;
-    }
-    if (char === '[') {
-      depth++;
-      continue;
-    }
-    if (char === ']') {
-      depth--;
-      if (depth === 0) {
-        return index;
-      }
-    }
-  }
-
-  return -1;
-}
-
 function readServerToolNames() {
   const sourcePath = 'packages/manifold3d-mcp/src/server/mcp/mcp-server.ts';
   const source = readText(sourcePath);
-  const toolsMarker = 'tools:';
-  const toolsIndex = source.indexOf(toolsMarker);
-  const openBracket = source.indexOf('[', toolsIndex);
-  if (toolsIndex < 0 || openBracket < 0) {
-    addFailure(`Could not find the MCP tools array in ${sourcePath}.`);
+  const sourceFile = ts.createSourceFile(sourcePath, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+  const candidates = [];
+  const propertyName = name => (ts.isIdentifier(name) || ts.isStringLiteralLike(name) ? name.text : undefined);
+
+  const visit = node => {
+    if (
+      ts.isPropertyAssignment(node) &&
+      propertyName(node.name) === 'tools' &&
+      ts.isArrayLiteralExpression(node.initializer)
+    ) {
+      candidates.push(node.initializer);
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sourceFile);
+
+  if (candidates.length !== 1) {
+    addFailure(`Expected exactly one MCP tools array in ${sourcePath}; found ${candidates.length}.`);
     return [];
   }
 
-  const closeBracket = findMatchingBracket(source, openBracket);
-  if (closeBracket < 0) {
-    addFailure(`Could not find the end of the MCP tools array in ${sourcePath}.`);
-    return [];
+  const names = [];
+  for (const element of candidates[0].elements) {
+    if (!ts.isObjectLiteralExpression(element)) {
+      addFailure(`Every MCP tool definition in ${sourcePath} must be an object literal.`);
+      return [];
+    }
+    const nameProperty = element.properties.find(
+      property => ts.isPropertyAssignment(property) && propertyName(property.name) === 'name',
+    );
+    if (!nameProperty || !ts.isPropertyAssignment(nameProperty) || !ts.isStringLiteralLike(nameProperty.initializer)) {
+      addFailure(`Every MCP tool definition in ${sourcePath} must have a string-literal name.`);
+      return [];
+    }
+    names.push(nameProperty.initializer.text);
   }
-
-  const toolsBlock = source.slice(openBracket, closeBracket + 1);
-  return uniqSorted([...toolsBlock.matchAll(/\bname:\s*['"]([a-z][\w-]*)['"]/g)].map(match => match[1]));
+  return uniqSorted(names);
 }
 
 function readSkillToolNames() {

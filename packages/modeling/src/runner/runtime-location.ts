@@ -12,7 +12,7 @@ import { SourceMapConsumer } from 'source-map';
 
 import { buildCodeFrame, type Issue } from '../validation/report.js';
 
-export interface SourceLocation {
+interface SourceLocation {
   line: number;
   col: number;
 }
@@ -25,13 +25,8 @@ export interface SourceLocation {
  */
 export async function runtimeSourceLocation(
   stack: string | undefined,
-  source: string,
   sourceMapText: string | undefined,
 ): Promise<SourceLocation | undefined> {
-  // `source` is reserved for a future fallback that re-parses the snippet
-  // when no sourcemap is available; kept here so callers can pass it
-  // unconditionally without churn the day we wire that up.
-  void source;
   const match = stack?.match(/<anonymous>:(\d+):(\d+)/);
   if (!match) {
     return undefined;

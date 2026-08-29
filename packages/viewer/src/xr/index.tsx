@@ -54,7 +54,7 @@ function XrSceneLayer() {
       try {
         await runtime?.dispose();
       } finally {
-        viewerRuntime.marks.setImmersivePresenting(false);
+        viewerRuntime.setMarksImmersivePresenting(false);
       }
     });
     startup = acquisition.acquired.then(async ownership => {
@@ -86,7 +86,7 @@ function XrSceneLayer() {
             }
           },
           onSessionStateChange: active => {
-            viewerRuntime.marks.setImmersivePresenting(active);
+            viewerRuntime.setMarksImmersivePresenting(active);
             if (!cancelled) {
               enterBinding?.setSessionState(active ? 'active' : 'idle');
             }
@@ -97,11 +97,11 @@ function XrSceneLayer() {
         removeModelHook = scene.addModelChangeHook(() => state.setHasModel(true));
         enterBinding = state.bindEnterHandler(async () => {
           // End any desktop gesture before the immersive runtime snapshots controls.
-          viewerRuntime.marks.setImmersivePresenting(true);
+          viewerRuntime.setMarksImmersivePresenting(true);
           try {
             await nextRuntime.enter();
           } catch (error) {
-            viewerRuntime.marks.setImmersivePresenting(false);
+            viewerRuntime.setMarksImmersivePresenting(false);
             throw new Error(xrErrorMessage(error), { cause: error });
           }
         });

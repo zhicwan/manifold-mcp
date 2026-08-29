@@ -1,11 +1,10 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-
-import type { PreviewFeature, PreviewPayload } from './types.js';
+import type { ViewerFeature, ViewerModel } from '@manifold3d/protocol/wire/model.js';
 
 /**
  * Programmatically-built demo model shown when no MCP preview server is
- * reachable (e.g. running the redesigned UI standalone). A small
+ * reachable (e.g. running the Viewer UI standalone). A small
  * mounting-bracket-style part: base plate + upright wall + cylindrical
  * boss, with per-part feature ids so hover-highlight and semantic
  * partLabels work exactly like they do against a live server.
@@ -14,11 +13,11 @@ import type { PreviewFeature, PreviewPayload } from './types.js';
  * the triangle soup — parts slightly interpenetrate, so treat the
  * numbers as demo-grade approximations.
  */
-export function buildDemoPayload(): PreviewPayload {
+export function buildDemoPayload(): ViewerModel {
   const IDENTITY_3X4 = [1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0];
 
   // Part definitions in Z-up world space (Manifold convention).
-  const parts: Array<{ label: string; kind: PreviewFeature['kind']; geom: THREE.BufferGeometry }> = [];
+  const parts: Array<{ label: string; kind: ViewerFeature['kind']; geom: THREE.BufferGeometry }> = [];
 
   // 1. Base plate: 80 x 50 x 8 mm sitting on the ground plane.
   {
@@ -94,9 +93,12 @@ export function buildDemoPayload(): PreviewPayload {
   }
 
   merged.computeBoundingBox();
-  const box = merged.boundingBox ?? new THREE.Box3();
+  const box = merged.boundingBox;
+  if (!box) {
+    throw new Error('demo payload: merged geometry has no bounding box');
+  }
 
-  const features: PreviewFeature[] = parts.map(p => ({
+  const features: ViewerFeature[] = parts.map(p => ({
     label: p.label,
     kind: p.kind,
     params: {},

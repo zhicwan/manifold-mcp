@@ -12,21 +12,18 @@ import {
   type ViewerRoom,
 } from '@manifold3d/viewer-host/viewer-host.js';
 
-import {
-  annotationPayloadAsJsonValue,
-  buildAnnotationAttachment as createAnnotationAttachment,
-} from './annotation-attachment.js';
+import { buildAnnotationAttachment, type AnnotationAttachmentPayload } from './annotation-attachment.js';
 import type { CopilotExtensionSession, CopilotSdkBoundary } from './sdk-boundary.js';
 import { createExtensionTools } from './tools.js';
 
 export const MANIFOLD_CANVAS_ID = 'manifold3d-viewer';
-export const MANIFOLD_CANVAS_DISPLAY_NAME = 'Manifold 3D Viewer';
+const MANIFOLD_CANVAS_DISPLAY_NAME = 'Manifold 3D Viewer';
 export const ATTACH_ANNOTATION_BATCH_ACTION_ID = 'attach-annotation-batch';
 export const FIX_ANNOTATION_BATCH_ACTION_ID = 'fix-annotation-batch';
 export const ATTACH_LOCATION_SELECTION_ACTION_ID = 'attach-location-selection';
 export const FIX_ANNOTATION_BATCH_PROMPT = 'Revise the current manifold-3d model using the attached annotation batch.';
-export const DEFAULT_SESSION_DISCONNECT_TIMEOUT_MS = 500;
-export const DEFAULT_FIX_SEND_DRAIN_TIMEOUT_MS = 250;
+const DEFAULT_SESSION_DISCONNECT_TIMEOUT_MS = 500;
+const DEFAULT_FIX_SEND_DRAIN_TIMEOUT_MS = 250;
 
 interface RoomBinding {
   instanceId: string;
@@ -54,9 +51,6 @@ export interface ShutdownOptions {
 }
 
 export interface CopilotExtensionApplication {
-  readonly session: CopilotExtensionSession;
-  readonly hostOrigin: string;
-  readonly liveRoomCount: number;
   shutdown(options?: ShutdownOptions): Promise<void>;
 }
 
@@ -133,11 +127,6 @@ export async function startCopilotExtension(
   }
 
   return {
-    session,
-    hostOrigin: host.origin,
-    get liveRoomCount(): number {
-      return controller.liveRoomCount;
-    },
     shutdown: shutdownOptions => controller.shutdown(shutdownOptions),
   };
 }
@@ -157,10 +146,6 @@ class ExtensionController {
       fixSendDrainTimeoutMs: number;
     },
   ) {}
-
-  get liveRoomCount(): number {
-    return this.rooms.size;
-  }
 
   get isShuttingDown(): boolean {
     return this.shuttingDown;
@@ -374,7 +359,7 @@ class ExtensionController {
     context: HostActionHandlerContext,
   ): Promise<HostActionHandlerResult> {
     const attachment = this.buildBatchAttachment(context);
-    await this.pushAttachment(binding, annotationBatchTitle(attachment.batchId), attachment.payload);
+    await this.pushAttachment(binding, annotationBatchTitle(attachment.batchId), attachment);
     return {
       status: 'succeeded',
       message: `Attached ${context.annotations.length} annotation${context.annotations.length === 1 ? '' : 's'}.`,
@@ -386,7 +371,7 @@ class ExtensionController {
     context: HostActionHandlerContext,
   ): Promise<HostActionHandlerResult> {
     const attachment = this.buildBatchAttachment(context);
-    await this.pushAttachment(binding, annotationBatchTitle(attachment.batchId), attachment.payload);
+    await this.pushAttachment(binding, annotationBatchTitle(attachment.batchId), attachment);
     const session = this.getSession();
     const operation = new Promise<void>(resolve => setImmediate(resolve))
       .then(() => {
@@ -421,39 +406,32 @@ class ExtensionController {
     context: HostActionHandlerContext,
   ): Promise<HostActionHandlerResult> {
     requireExplicitAnnotationCount(context, 1, 'Location selection');
-    const attachment = createAnnotationAttachment({
+    const attachment = buildAnnotationAttachment({
       mode: 'location-selection',
       modelVersion: context.modelVersion,
       annotationRevision: context.annotationRevision,
       annotations: context.annotations,
     });
-    await this.pushAttachment(
-      binding,
-      locationSelectionTitle(attachment.payload.annotations[0].partLabel),
-      attachment.payload,
-    );
+    await this.pushAttachment(binding, locationSelectionTitle(attachment.annotations[0].partLabel), attachment);
     return { status: 'succeeded', message: 'Attached selected location.' };
   }
 
   private buildBatchAttachment(context: HostActionHandlerContext) {
     requireExplicitAnnotationCount(context, undefined, 'Annotation batch');
     const batchId = parseBatchId(context.input);
-    return {
+    return buildAnnotationAttachment({
+      mode: 'annotation-batch',
       batchId,
-      ...createAnnotationAttachment({
-        mode: 'annotation-batch',
-        batchId,
-        modelVersion: context.modelVersion,
-        annotationRevision: context.annotationRevision,
-        annotations: context.annotations,
-      }),
-    };
+      modelVersion: context.modelVersion,
+      annotationRevision: context.annotationRevision,
+      annotations: context.annotations,
+    });
   }
 
   private async pushAttachment(
     binding: RoomBinding,
     title: string,
-    payload: ReturnType<typeof createAnnotationAttachment>['payload'],
+    payload: AnnotationAttachmentPayload,
   ): Promise<void> {
     if (!this.canPublishTo(binding)) {
       throw new Error('Canvas room is no longer available.');
@@ -465,7 +443,7 @@ class ExtensionController {
           {
             type: 'extension_context',
             title,
-            payload: annotationPayloadAsJsonValue(payload),
+            payload,
           },
         ],
       });

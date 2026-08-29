@@ -1,12 +1,19 @@
-import { createContext, createElement, useContext, useRef, useSyncExternalStore, type ReactNode } from 'react';
+import {
+  createContext,
+  createElement,
+  useCallback,
+  useContext,
+  useRef,
+  useSyncExternalStore,
+  type ReactNode,
+} from 'react';
 
+import type { ViewerModel } from '@manifold3d/protocol/wire/model.js';
 import type { HostActionsClient } from './host-actions/client.js';
 import type { AnnotationStore } from './marks/annotation-store.js';
-import type { FlyoutLayer } from './marks/flyout.js';
-import type { Annotation } from './marks/types.js';
+import type { Annotation, MarkMode } from './marks/types.js';
 import type { RenderMode } from './scene/viewer.js';
 import type { ConnectionStatus } from './transport/ws-client.js';
-import type { PreviewPayload } from './types.js';
 
 /**
  * Tiny instance-scoped external store. Imperative subsystems write to the
@@ -14,23 +21,9 @@ import type { PreviewPayload } from './types.js';
  */
 export interface MarksRuntime {
   store: AnnotationStore;
-  flyouts: FlyoutLayer;
   commitOpenDraft(): void;
-  getDraftBatch(): { batchId: string; annotationIds: readonly string[] };
-  sealBatch(batchId: string): boolean;
-  restoreBatch(batchId: string): boolean;
-  freezeBatch(batchId: string): void;
-  cancelBatch(batchId: string): void;
-  commitSelection(id: string): void;
-  removeSelection(id: string): void;
   flushAnnotations(): boolean;
 }
-
-/**
- * Interaction mode for the Viewer rail. Annotate collects a comment batch;
- * select emits one location-only host attachment per completed gesture.
- */
-export type MarkMode = 'orbit' | 'annotate' | 'select';
 
 export interface ViewerApi {
   setRenderMode(mode: RenderMode): void;
@@ -41,28 +34,24 @@ export interface ViewerApi {
   zoomIn(): void;
   /** Move the desktop perspective camera farther from the orbit target. */
   zoomOut(): void;
-  // VIE-4: exporters are dynamically imported on first use. The handlers
-  // resolve when the module download AND the export step both complete;
-  // callers can ignore the returned promise (fire-and-forget click).
+  /** Dynamically import an exporter, generate the file, and start its download. */
   export3mf(): Promise<void>;
   exportStl(): Promise<void>;
 }
 
 export interface ViewerState {
-  payload: PreviewPayload | null;
+  payload: ViewerModel | null;
   status: ConnectionStatus;
   renderMode: RenderMode;
   modelVersion: string;
   /**
-   * Owned by ViewerCanvas — swapped in once installMarks() has wired up
-   * the annotation subsystem. ControlPanel and MarksSidebar read it via
-   * useViewerState rather than receiving it as a prop, so an early-mount
-   * sidebar doesn't see a stale `null` reference (VIE-6).
+   * Owned by ViewerCanvas and published once the annotation subsystem is
+   * ready. React controls subscribe to this instance instead of mirroring it.
    */
   marksRuntime: MarksRuntime | null;
   /** Same lifecycle as marksRuntime. Bound by ViewerCanvas. */
   viewerApi: ViewerApi | null;
-  /** Active interaction tool (left tool rail). */
+  /** Active interaction tool. */
   markMode: MarkMode;
   /** Malformed or unsupported Viewer Host protocol error. */
   protocolError: string | null;
@@ -105,7 +94,7 @@ export function createViewerStore() {
       listeners.add(fn);
       return () => listeners.delete(fn);
     },
-    setPayload(payload: PreviewPayload | null): void {
+    setPayload(payload: ViewerModel | null): void {
       if (state.payload === payload) {
         return;
       }
@@ -215,13 +204,11 @@ export function useViewerState<T>(selector: (s: ViewerState) => T): T {
  * snapshot is read on the next paint anyway.
  */
 export function useAnnotations(store: AnnotationStore | null): readonly Annotation[] {
-  const subscribe = (fn: Listener): (() => void) => {
-    if (!store) {
-      return () => undefined;
-    }
-    return store.subscribe(() => fn());
-  };
-  const getSnapshot = (): readonly Annotation[] => (store ? store.list() : EMPTY_ANNOTATIONS);
+  const subscribe = useCallback(
+    (fn: Listener): (() => void) => (store ? store.subscribe(() => fn()) : () => undefined),
+    [store],
+  );
+  const getSnapshot = useCallback((): readonly Annotation[] => (store ? store.list() : EMPTY_ANNOTATIONS), [store]);
   return useSyncExternalStore(subscribe, getSnapshot, () => EMPTY_ANNOTATIONS);
 }
 

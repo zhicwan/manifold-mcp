@@ -1,9 +1,7 @@
 /**
  * String-distance helpers and human-friendly "did you mean" messaging used
  * by the static lint. Kept separate from `static-lint.ts` so the AST walk
- * doesn't get tangled up with general-purpose suggestion logic, and so a
- * future explainDiagnostic surface can reuse `levenshtein`/`suggestMany`
- * without pulling in the whole static analyser.
+ * doesn't get tangled up with suggestion logic.
  */
 
 const API_ALIASES = new Map<string, string>([
@@ -16,7 +14,7 @@ const API_ALIASES = new Map<string, string>([
 ]);
 
 /** Look up an alias hint (e.g. "Manifold.box" -> "Use Manifold.cube(...)."). */
-export function aliasFor(namespace: string, name: string): string | undefined {
+function aliasFor(namespace: string, name: string): string | undefined {
   return API_ALIASES.get(`${namespace}.${name}`);
 }
 
@@ -30,7 +28,7 @@ export function hasAlias(namespace: string, name: string): boolean {
  * distance `max(2, ceil(name.length / 2))` of `name`, sorted by
  * (distance asc, candidate localeCompare asc).
  */
-export function suggestMany(name: string, pool: Set<string>, limit = 3): string[] {
+function suggestMany(name: string, pool: Set<string>, limit = 3): string[] {
   const scored: Array<{ candidate: string; distance: number }> = [];
   const maxDistance = Math.max(2, Math.ceil(name.length / 2));
   for (const candidate of pool) {
@@ -61,7 +59,7 @@ export function unknownApiMessage(namespace: 'Manifold' | 'CrossSection', name: 
 }
 
 /** Standard iterative two-row Levenshtein distance. */
-export function levenshtein(a: string, b: string): number {
+function levenshtein(a: string, b: string): number {
   const m = a.length;
   const n = b.length;
   if (m === 0) {

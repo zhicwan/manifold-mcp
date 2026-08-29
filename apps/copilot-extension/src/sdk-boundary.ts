@@ -1,26 +1,16 @@
 import type { Canvas, CanvasOptions, JoinSessionConfig } from '@github/copilot-sdk/extension';
-import type { MessageOptions, Tool, ToolResultObject } from '@github/copilot-sdk';
+import type { CopilotSession, MessageOptions, Tool, ToolResultObject } from '@github/copilot-sdk';
 
-export interface ExtensionContextAttachmentInput {
-  type: 'extension_context';
-  title: string;
-  payload: null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue };
-}
-
-export type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue };
+type SendAttachmentsToMessage = CopilotSession['rpc']['extensions']['sendAttachmentsToMessage'];
 
 export interface CopilotExtensionSession {
-  readonly sessionId: string;
-  readonly workspacePath: string | undefined;
+  readonly workspacePath: CopilotSession['workspacePath'];
   send(options: MessageOptions): Promise<string>;
-  log(message: string, options?: { level?: 'info' | 'warning' | 'error'; ephemeral?: boolean }): Promise<void>;
-  disconnect(): Promise<void>;
+  log(...args: Parameters<CopilotSession['log']>): ReturnType<CopilotSession['log']>;
+  disconnect(): ReturnType<CopilotSession['disconnect']>;
   readonly rpc: {
     readonly extensions: {
-      sendAttachmentsToMessage(params: {
-        instanceId?: string;
-        attachments: ExtensionContextAttachmentInput[];
-      }): Promise<void>;
+      sendAttachmentsToMessage: SendAttachmentsToMessage;
     };
   };
 }

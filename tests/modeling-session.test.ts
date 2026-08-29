@@ -70,7 +70,7 @@ function artifact(description: string): ModelArtifact {
 }
 
 function success(model: ModelArtifact): RunResult {
-  return { report: emptyReport(), mesh: model };
+  return { report: emptyReport(), artifact: model };
 }
 
 function failure(): RunResult {
@@ -152,8 +152,8 @@ describe('ModelingSession', () => {
     const first = await session.execute({ code: 'first' });
     const second = await session.execute({ code: 'second' });
 
-    expect(first.model).toEqual({ id: 1, revision: 1, artifact: firstArtifact });
-    expect(second.model).toEqual({ id: 2, revision: 2, artifact: secondArtifact });
+    expect(first.model).toEqual({ revision: 1, artifact: firstArtifact });
+    expect(second.model).toEqual({ revision: 2, artifact: secondArtifact });
     expect(session.getCurrentModel()).toBe(second.model);
     expect(notifications).toEqual([1, 2]);
     await session.dispose();

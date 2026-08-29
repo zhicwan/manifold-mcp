@@ -30,7 +30,7 @@ let handle: PreviewModule extends { startPreviewServer: (...args: never[]) => Pr
 
 function syntheticModel(): ViewerModelFrame {
   return {
-    description: 'getLastModel test',
+    description: 'preview transport test',
     numProp: 3,
     triangles: 1,
     vertices: 3,
@@ -56,11 +56,6 @@ function syntheticModel(): ViewerModelFrame {
 describe.skipIf(skipUnlessBuilt)('preview server', () => {
   beforeAll(async () => {
     previewModule = (await import(pathToFileURL(distPreview).href)) as PreviewModule;
-    // `startPreviewServer(0)` is awkward: findFreePort returns 0 (a free
-    // OS-assigned ephemeral binds successfully then gets released), but
-    // the actual listening socket binds to a different ephemeral port,
-    // leaving handle.url pointing at port 0. Use a high fixed port and
-    // rely on the built-in 50-port walk for collision recovery.
     handle = await previewModule.startPreviewServer(47371);
   }, 15_000);
 
@@ -87,20 +82,6 @@ describe.skipIf(skipUnlessBuilt)('preview server', () => {
     expect(res.status).toBe(404);
   });
 
-  it('exposes the cached viewer model only after pushModel()', async () => {
-    const localHandle = await previewModule.startPreviewServer(47671);
-    try {
-      expect(localHandle.getLastModel()).toBeUndefined();
-
-      const model = syntheticModel();
-      localHandle.pushModel(model);
-
-      expect(localHandle.getLastModel()).toBe(model);
-    } finally {
-      await localHandle.close();
-    }
-  });
-
   it('sends a versioned header and binary frames that decode as the pushed model', async () => {
     const localHandle = await previewModule.startPreviewServer(47771);
     const wsUrl = `${localHandle.url.replace(/^http/, 'ws')}ws`;
@@ -119,7 +100,7 @@ describe.skipIf(skipUnlessBuilt)('preview server', () => {
               if (!isBinary) {
                 const parsed = JSON.parse(raw.toString()) as { kind?: unknown };
                 if (parsed.kind === 'mesh') {
-                  header = parseModelHeader(parsed, { allowLegacy: false });
+                  header = parseModelHeader(parsed);
                 }
                 return;
               }
@@ -155,7 +136,6 @@ describe.skipIf(skipUnlessBuilt)('preview server', () => {
       expect(model.description).toBe(frame.description);
       expect(model.triangles).toBe(frame.triangles);
       expect([...model.triVerts]).toEqual([0, 1, 2]);
-      expect(localHandle.getLastModel()).toBe(frame);
       expect(header.protocolVersion).toBe(VIEWER_PROTOCOL_VERSION);
     } finally {
       ws.terminate();
@@ -181,6 +161,8 @@ describe.skipIf(skipUnlessBuilt)('preview server', () => {
       ws.send(
         JSON.stringify({
           kind: 'annotations',
+          protocolVersion: 1,
+          revision: 1,
           modelVersion: 'v-stale-12345',
           items: [
             {

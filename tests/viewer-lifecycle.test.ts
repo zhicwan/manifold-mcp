@@ -1,8 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { readFile } from 'node:fs/promises';
-import { resolve } from 'node:path';
 
 import { Viewer } from '../packages/viewer/src/scene/viewer.js';
+import { createViewerGenerationDisposer } from '../packages/viewer/src/viewer-runtime-lifecycle.js';
 
 describe('Viewer render lifecycle', () => {
   afterEach(() => {
@@ -56,21 +55,72 @@ describe('Viewer render lifecycle', () => {
     expect(disposeResources).toHaveBeenCalledOnce();
   });
 
-  it('stops ViewerCanvas before contribution cleanup begins', async () => {
-    const source = await readFile(
-      resolve(import.meta.dirname, '../packages/viewer/src/components/viewer-canvas.tsx'),
-      'utf8',
-    );
+  it('stops once, clears public state, then disposes contributions before scene resources', async () => {
+    const order: string[] = [];
+    const contribution = deferred<void>();
+    const dispose = createViewerGenerationDisposer({
+      stop: () => {
+        order.push('stop');
+      },
+      beforeContributions: [
+        () => {
+          order.push('clear-state');
+        },
+      ],
+      disposeContributions: async () => {
+        order.push('contributions-start');
+        await contribution.promise;
+        order.push('contributions-end');
+      },
+      afterContributions: [
+        () => {
+          order.push('scene');
+        },
+      ],
+    });
 
-    const generationDispose = source.slice(
-      source.lastIndexOf('dispose(): Promise<void> {'),
-      source.lastIndexOf('} catch (error) {'),
-    );
-    expect(generationDispose.indexOf('viewer.stop()')).toBeLessThan(
-      generationDispose.indexOf('await runtimeHost.clearRuntime(publishedRuntime)'),
-    );
-    expect(generationDispose.indexOf('await runtimeHost.clearRuntime(publishedRuntime)')).toBeLessThan(
-      generationDispose.indexOf('await viewer.dispose()'),
-    );
+    const first = dispose();
+    expect(dispose()).toBe(first);
+    expect(order).toEqual(['stop', 'clear-state', 'contributions-start']);
+    contribution.resolve();
+    await first;
+    expect(order).toEqual(['stop', 'clear-state', 'contributions-start', 'contributions-end', 'scene']);
+  });
+
+  it('runs every cleanup phase and aggregates failures', async () => {
+    const completed: string[] = [];
+    const dispose = createViewerGenerationDisposer({
+      stop: () => {
+        throw new Error('stop');
+      },
+      beforeContributions: [
+        () => {
+          completed.push('before');
+          throw new Error('before');
+        },
+      ],
+      disposeContributions: () => {
+        completed.push('contributions');
+        throw new Error('contributions');
+      },
+      afterContributions: [
+        () => {
+          completed.push('after');
+        },
+      ],
+    });
+
+    const failure = await dispose().catch((error: unknown) => error);
+    expect(failure).toBeInstanceOf(AggregateError);
+    expect((failure as AggregateError).errors).toHaveLength(3);
+    expect(completed).toEqual(['before', 'contributions', 'after']);
   });
 });
+
+function deferred<T>() {
+  let resolvePromise: (value: T | PromiseLike<T>) => void = () => undefined;
+  const promise = new Promise<T>(resolve => {
+    resolvePromise = resolve;
+  });
+  return { promise, resolve: resolvePromise };
+}

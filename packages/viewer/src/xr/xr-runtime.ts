@@ -80,7 +80,6 @@ class XrRuntimeDisposedDuringEntryError extends Error {
 
 const continuePendingSessionRequest = Symbol('continuePendingSessionRequest');
 const completePendingSessionRequest = Symbol('completePendingSessionRequest');
-const inspectPendingSessionRequest = Symbol('inspectPendingSessionRequest');
 
 interface PendingSessionRequestTicket {
   runtime: XrRuntime | null;
@@ -204,10 +203,6 @@ export class XrRuntime {
     this.pendingSessionRequest = null;
     this.enterPromise = null;
     this.entering = false;
-  }
-
-  [inspectPendingSessionRequest](): PendingSessionRequestTicket | null {
-    return this.pendingSessionRequest;
   }
 
   private async attachSession(session: XRSession): Promise<void> {
@@ -735,15 +730,3 @@ async function endDetachedSession(session: XRSession, onRuntimeError: (error: un
 }
 
 const ignorePromiseRejection = (): undefined => undefined;
-
-export const xrRuntimeTestHooks = {
-  pendingSessionRequest(runtime: XrRuntime): { isAttached(): boolean } | null {
-    const ticket = runtime[inspectPendingSessionRequest]();
-    if (!ticket) {
-      return null;
-    }
-    return {
-      isAttached: () => ticket.runtime !== null,
-    };
-  },
-};

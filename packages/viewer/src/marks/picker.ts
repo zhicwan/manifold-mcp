@@ -23,7 +23,7 @@ export interface RegionPick {
  * Convert a mouse event in canvas space into normalized device coords
  * (range [-1, 1] in x and y), accounting for canvas size + offset.
  */
-export function eventToNdc(ev: MouseEvent, canvas: HTMLCanvasElement): THREE.Vector2 {
+export function eventToNdc(ev: Pick<MouseEvent, 'clientX' | 'clientY'>, canvas: HTMLCanvasElement): THREE.Vector2 {
   const rect = canvas.getBoundingClientRect();
   const x = ((ev.clientX - rect.left) / rect.width) * 2 - 1;
   const y = -((ev.clientY - rect.top) / rect.height) * 2 + 1;

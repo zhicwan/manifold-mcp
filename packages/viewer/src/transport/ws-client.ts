@@ -66,8 +66,8 @@ export interface ConnectOptions {
    * Fired whenever the WebSocket connection state changes.
    * 'connecting' is reported the moment open() starts (including each
    * reconnect attempt); 'connected' on successful onopen; 'disconnected'
-   * on close/error. Used by the control panel's status indicator dot.
-   * Repeats of the same status are suppressed (VIE-1).
+   * on close/error. Used by the Viewer status indicator.
+   * Repeats of the same status are suppressed.
    */
   onStatusChange?: StatusHandler;
 }
@@ -221,7 +221,7 @@ export function createModelFrameReceiver(
 }
 
 /**
- * Reconnect tuning (VIE-1):
+ * Reconnect tuning:
  *   - Exponential base 2 backoff starting at 1s, capped at 30s.
  *   - ±25% jitter applied to each delay so a fleet of viewers reopened
  *     simultaneously (e.g. server restart) doesn't thunder the socket.
@@ -285,12 +285,10 @@ export function connectMeshFeed(opts: ConnectOptions): MeshFeedHandle {
     const connectionReceiver = createModelFrameReceiver({
       ...opts,
       onHello(message): void {
-        if (message.resumeToken !== undefined) {
-          resumeToken = message.resumeToken;
-          writeResumeToken(storageKey, message.resumeToken);
-          if (ws.readyState === WebSocket.OPEN) {
-            ws.send(JSON.stringify(createResumeTokenAckMessage(message.resumeToken)));
-          }
+        resumeToken = message.resumeToken;
+        writeResumeToken(storageKey, message.resumeToken);
+        if (ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify(createResumeTokenAckMessage(message.resumeToken)));
         }
         opts.onHello?.(message);
       },

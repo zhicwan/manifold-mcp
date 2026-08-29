@@ -57,13 +57,12 @@ export default defineConfig(({ mode }) => ({
     chunkSizeWarningLimit: 1500,
     rollupOptions: {
       output: {
-        // VIE-4: split the bundle so the browser can cache each
+        // Split the bundle so the browser can cache each
         // dependency tree independently of the application code.
         // Without this, a one-line change to viewer.ts re-downloads
         // the entire 870KB blob; with it, only the small `app` chunk
         // changes while the (much larger) vendor chunks reuse their
-        // existing immutable cache entries served by VIE-4 in
-        // preview-server.
+        // existing immutable cache entries served by the preview server.
         manualChunks(id: string): string | undefined {
           if (!id.includes('node_modules')) {
             return undefined;

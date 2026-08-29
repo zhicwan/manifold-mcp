@@ -40,8 +40,8 @@ const DEFAULT_ANNOTATION_GRACE_MS = 5_000;
 const MAX_ACTION_REQUESTS = 1_024;
 export const MAX_UNACKNOWLEDGED_RESUME_TOKENS = 4;
 export const MAX_CLIENT_TEXT_BYTES = Math.max(MAX_ANNOTATIONS_PAYLOAD_BYTES, 64 * 1024);
-export const MAX_VIEWER_ASSETS = 256;
-export const MAX_VIEWER_ASSET_BYTES = 16 * 1024 * 1024;
+const MAX_VIEWER_ASSETS = 256;
+const MAX_VIEWER_ASSET_BYTES = 16 * 1024 * 1024;
 export const MAX_VIEWER_ASSET_MANIFEST_BYTES = 32 * 1024 * 1024;
 const ROOM_PATH_PREFIX = 'rooms';
 
@@ -174,17 +174,29 @@ interface ActionRequestRecord {
 }
 
 interface ParsedRoomPath {
-  room: ViewerRoom;
+  room: ViewerRoomImpl;
   assetPath: string;
   resumeToken?: string;
 }
 
-export class ViewerHost {
-  readonly port: number;
-  readonly hostname: string;
+export interface ViewerHost {
+  readonly origin: string;
+  createRoom(options?: ViewerRoomOptions): ViewerRoom;
+  close(): Promise<void>;
+}
+
+export interface ViewerRoom {
+  readonly url: string;
+  pushModel(model: ViewerModelFrame): void;
+  getAnnotations(): ViewerAnnotationSnapshot;
+  registerAction(descriptor: HostActionDescriptor, handler: HostActionHandler): () => void;
+  close(): Promise<void>;
+}
+
+class ViewerHostServer implements ViewerHost {
   readonly origin: string;
 
-  private readonly roomsByCredential = new Map<string, ViewerRoom>();
+  private readonly roomsByCredential = new Map<string, ViewerRoomImpl>();
   private readonly allowedHosts: ReadonlySet<string>;
   private readonly allowedOrigins: ReadonlySet<string>;
   private readonly frameAncestors: readonly string[];
@@ -201,8 +213,6 @@ export class ViewerHost {
     private readonly defaultAnnotationGraceMs: number,
     private readonly logger: ViewerHostLogger,
   ) {
-    this.hostname = hostname;
-    this.port = port;
     this.origin = `http://${hostname}:${port}`;
 
     const hosts = new Set([`${hostname}:${port}`]);
@@ -229,7 +239,7 @@ export class ViewerHost {
       'assetProvider' in options ? options.assetProvider : createFileViewerAssetProvider(options.assetRoot);
     const requestedPort = options.preferredPort === 0 ? 0 : await findFreePort(options.preferredPort ?? 3737, hostname);
     const logger = options.logger ?? stderrLogger;
-    const holder: { instance?: ViewerHost } = {};
+    const holder: { instance?: ViewerHostServer } = {};
     const http = createServer((request, response) => {
       if (!holder.instance) {
         response.statusCode = 503;
@@ -257,7 +267,7 @@ export class ViewerHost {
       await closeHttp(http);
       throw new Error('Viewer Host did not expose a TCP address.');
     }
-    const instance = new ViewerHost(
+    const instance = new ViewerHostServer(
       http,
       wss,
       assetProvider,
@@ -278,7 +288,7 @@ export class ViewerHost {
     }
     const roomId = randomToken(18);
     const credential = randomToken(32);
-    const room = new ViewerRoom(
+    const room = new ViewerRoomImpl(
       this,
       roomId,
       credential,
@@ -303,7 +313,7 @@ export class ViewerHost {
     await closeHttp(this.http);
   }
 
-  removeRoom(room: ViewerRoom): void {
+  removeRoom(room: ViewerRoomImpl): void {
     this.roomsByCredential.delete(roomCredentialKey(room.id, room.credential));
   }
 
@@ -416,7 +426,7 @@ export class ViewerHost {
   }
 }
 
-export class ViewerRoom {
+class ViewerRoomImpl implements ViewerRoom {
   readonly url: string;
 
   private readonly clientsById = new Map<string, RoomClientState>();
@@ -428,7 +438,7 @@ export class ViewerRoom {
   private closed = false;
 
   constructor(
-    private readonly host: ViewerHost,
+    private readonly host: ViewerHostServer,
     readonly id: string,
     readonly credential: string,
     private readonly annotationGraceMs: number,
@@ -459,20 +469,6 @@ export class ViewerRoom {
         sendModel(socket, model);
       }
     }
-  }
-
-  /** Backwards-compatible alias for pushModel(). */
-  push(model: ViewerModelFrame): void {
-    this.pushModel(model);
-  }
-
-  getLastModel(): ViewerModelFrame | undefined {
-    return this.lastModel;
-  }
-
-  /** @deprecated Use getLastModel(). */
-  getLastMesh(): ViewerModelFrame | undefined {
-    return this.lastModel;
   }
 
   getAnnotations(): ViewerAnnotationSnapshot {
@@ -690,7 +686,7 @@ export class ViewerRoom {
       return;
     }
     const snapshot = client.snapshot;
-    const revision = message.revision ?? (snapshot?.revision ?? -1) + 1;
+    const revision = message.revision;
     const fingerprint = JSON.stringify(message.items);
     if (snapshot && revision < snapshot.revision) {
       this.logger.warn('[viewer-host] rejected stale annotation revision.');
@@ -973,7 +969,7 @@ export class ViewerRoom {
 }
 
 export async function startViewerHost(options: ViewerHostOptions): Promise<ViewerHost> {
-  return ViewerHost.start(options);
+  return ViewerHostServer.start(options);
 }
 
 export function createInMemoryViewerAssetProvider(manifest: ViewerAssetManifest): ViewerAssetProvider {
@@ -1113,8 +1109,6 @@ function cacheControlFor(relativePath: string): string {
   }
   return 'public, max-age=300';
 }
-
-export const _testCacheControlFor = cacheControlFor;
 
 function setSecurityHeaders(response: ServerResponse, origin: string, frameAncestors: readonly string[]): void {
   const webSocketOrigin = origin.replace(/^http/, 'ws');

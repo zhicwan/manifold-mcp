@@ -9,6 +9,8 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { WebSocket } from 'ws';
 import { parse as parseYaml } from 'yaml';
 
+import { createAnnotationsMessage } from '../packages/protocol/src/wire/annotations.js';
+
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..');
 const entry = join(repoRoot, 'packages', 'manifold3d-mcp', 'dist', 'server', 'index.js');
 const smokeScriptRoot = join(repoRoot, '.manifold3d-mcp-smoke-files');
@@ -562,13 +564,11 @@ result = Manifold.cube(size);
       await waitFor(() => typeof serverModelVersion === 'string', 'capture annotation model_version');
 
       annotationSocket.send(
-        JSON.stringify({
-          kind: 'annotations',
-          modelVersion: serverModelVersion,
-          items: [
+        JSON.stringify(
+          createAnnotationsMessage(serverModelVersion!, 1, [
             {
               id: 'capture-point-1',
-              modelVersion: serverModelVersion,
+              modelVersion: serverModelVersion!,
               kind: 'point',
               partLabel: 'point#1',
               note: 'capture this point',
@@ -576,7 +576,7 @@ result = Manifold.cube(size);
             },
             {
               id: 'capture-sketch-1',
-              modelVersion: serverModelVersion,
+              modelVersion: serverModelVersion!,
               kind: 'sketch',
               partLabel: 'sketch#1',
               note: 'capture this sketch',
@@ -590,8 +590,8 @@ result = Manifold.cube(size);
                 ],
               ],
             },
-          ],
-        }),
+          ]),
+        ),
       );
 
       let annotations = '';
@@ -846,20 +846,18 @@ result = Manifold.cube(size);
       );
 
       annotationSocket.send(
-        JSON.stringify({
-          kind: 'annotations',
-          modelVersion: serverModelVersion,
-          items: [
+        JSON.stringify(
+          createAnnotationsMessage(serverModelVersion!, 1, [
             {
               id: 'ann_test_1',
-              modelVersion: serverModelVersion,
+              modelVersion: serverModelVersion!,
               kind: 'point',
               partLabel: 'point#1',
               note: 'too thick',
               worldCoord: [1.5, 0, 2.0],
             },
-          ],
-        }),
+          ]),
+        ),
       );
       let annotations = '';
       await waitForAsync(async () => {

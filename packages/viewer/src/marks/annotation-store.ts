@@ -31,37 +31,19 @@ export class AnnotationStore {
   private revision = 0;
   private snapshot: readonly Annotation[] = Object.freeze([]);
 
-  getCurrentCommentBatchId(): string {
-    return this.currentCommentBatchId;
-  }
-
-  /** Immutable snapshot of the active batch's draft comments. */
-  getCurrentDraftBatchSnapshot(): readonly CommentAnnotation[] {
-    return this.getDraftComments(this.currentCommentBatchId);
-  }
-
-  getCurrentDraftBatchIds(): readonly string[] {
-    return this.getCurrentDraftBatchSnapshot().map(annotation => annotation.id);
-  }
-
-  getCurrentDraftBatchCount(): number {
-    return this.getCurrentDraftBatchSnapshot().length;
-  }
-
-  /** Compact current-batch contract used by the React integration. */
+  /** Immutable snapshot of the active draft comment transaction. */
   getDraftBatch(): CommentBatchSnapshot {
     return makeBatchSnapshot(this.currentCommentBatchId, this.getDraftComments(this.currentCommentBatchId));
   }
 
   /**
    * Commit every draft comment in the active (or explicitly captured) batch.
-   * A non-empty successful freeze rotates the active batch and returns the
-   * committed transaction snapshot.
+   * A non-empty successful freeze rotates the active batch.
    */
-  freezeBatch(batchId: string = this.currentCommentBatchId): CommentBatchSnapshot | undefined {
+  freezeBatch(batchId: string): boolean {
     const comments = this.getBatchComments(batchId, new Set(['draft', 'pending']));
     if (comments.length === 0) {
-      return undefined;
+      return false;
     }
     for (const comment of comments) {
       this.items.set(comment.id, freezeAnnotation({ ...comment, state: 'committed' }));
@@ -70,17 +52,14 @@ export class AnnotationStore {
       this.rotateCommentBatch();
     }
     this.commit();
-    return makeBatchSnapshot(
-      batchId,
-      comments.map(comment => freezeAnnotation({ ...comment, state: 'committed' })),
-    );
+    return true;
   }
 
   /** Seal the current batch while a host action is in flight and rotate writes. */
-  sealBatch(batchId: string): CommentBatchSnapshot | undefined {
+  sealBatch(batchId: string): boolean {
     const drafts = this.getDraftComments(batchId);
     if (drafts.length === 0) {
-      return undefined;
+      return false;
     }
     for (const draft of drafts) {
       this.items.set(draft.id, freezeAnnotation({ ...draft, state: 'pending' }));
@@ -89,17 +68,14 @@ export class AnnotationStore {
       this.rotateCommentBatch();
     }
     this.commit();
-    return makeBatchSnapshot(
-      batchId,
-      drafts.map(draft => freezeAnnotation({ ...draft, state: 'pending' })),
-    );
+    return true;
   }
 
   /** Merge a failed sealed batch back into the active editable transaction. */
-  restoreBatch(batchId: string): CommentBatchSnapshot | undefined {
+  restoreBatch(batchId: string): boolean {
     const pending = this.getBatchComments(batchId, new Set(['pending']));
     if (pending.length === 0) {
-      return undefined;
+      return false;
     }
     for (const comment of pending) {
       this.items.set(
@@ -112,20 +88,15 @@ export class AnnotationStore {
       );
     }
     this.commit();
-    return this.getDraftBatch();
-  }
-
-  /** Remove only draft comments in the active batch, then start a new batch. */
-  cancelCurrentBatch(): readonly string[] {
-    return this.cancelBatch(this.currentCommentBatchId);
+    return true;
   }
 
   /** Cancel a captured batch only if it is still the active draft batch. */
-  cancelBatch(batchId: string): readonly string[] {
+  cancelBatch(batchId: string): boolean {
     if (batchId !== this.currentCommentBatchId) {
-      return [];
+      return false;
     }
-    const ids = this.getCurrentDraftBatchIds();
+    const ids = this.getDraftBatch().annotationIds;
     for (const id of ids) {
       this.items.delete(id);
     }
@@ -133,27 +104,23 @@ export class AnnotationStore {
     if (ids.length > 0) {
       this.commit();
     }
-    return ids;
+    return true;
   }
 
   /** Transition one pending selection to committed after attachment succeeds. */
-  commitPendingSelection(id: string): SelectionAnnotation | undefined {
+  commitSelection(id: string): boolean {
     const current = this.items.get(id);
     if (!current || current.intent !== 'selection' || current.state !== 'pending') {
-      return undefined;
+      return false;
     }
     const committed: SelectionAnnotation = freezeAnnotation({ ...current, state: 'committed' });
     this.items.set(id, committed);
     this.commit();
-    return committed;
-  }
-
-  commitSelection(id: string): SelectionAnnotation | undefined {
-    return this.commitPendingSelection(id);
+    return true;
   }
 
   /** Remove one pending selection after attachment fails. */
-  removeFailedSelection(id: string): boolean {
+  removeSelection(id: string): boolean {
     const current = this.items.get(id);
     if (!current || current.intent !== 'selection' || current.state !== 'pending') {
       return false;
@@ -163,25 +130,17 @@ export class AnnotationStore {
     return true;
   }
 
-  removeSelection(id: string): boolean {
-    return this.removeFailedSelection(id);
-  }
-
-  /** Clear all annotations and rotate transactions for a newly loaded model. */
-  resetForModelVersion(v: string): void {
+  /** Reset stale annotations only when the host advances to a new model. */
+  setModelVersion(v: string): void {
+    if (this.modelVersion === v) {
+      return;
+    }
     this.modelVersion = v;
     this.items.clear();
     this.seqByKind = { point: 0, region: 0 };
     this.idSequence = 0;
     this.rotateCommentBatch();
     this.commit();
-  }
-
-  /** Backward-compatible model update; identical versions are already current. */
-  setModelVersion(v: string): void {
-    if (this.modelVersion !== v) {
-      this.resetForModelVersion(v);
-    }
   }
 
   getModelVersion(): string {
@@ -216,11 +175,6 @@ export class AnnotationStore {
     this.items.set(ann.id, ann);
     this.commit();
     return ann;
-  }
-
-  /** Compatibility alias: annotations created through add() are comments. */
-  add(input: CommentAnnotationInput): CommentAnnotation {
-    return this.addComment(input);
   }
 
   /** Create a geometry-only selection awaiting attachment by ViewerCanvas. */
@@ -269,10 +223,6 @@ export class AnnotationStore {
 
   list(): readonly Annotation[] {
     return this.snapshot;
-  }
-
-  size(): number {
-    return this.items.size;
   }
 
   subscribe(fn: Listener): () => void {
@@ -334,16 +284,11 @@ function assertNoteLength(note: string): void {
 }
 
 function makeBatchSnapshot(batchId: string, annotations: readonly CommentAnnotation[]): CommentBatchSnapshot {
-  const frozenAnnotations = [...annotations];
-  const annotationIds = frozenAnnotations.map(annotation => annotation.id);
-  Object.freeze(frozenAnnotations);
+  const annotationIds = annotations.map(annotation => annotation.id);
   Object.freeze(annotationIds);
   const snapshot = {
     batchId,
-    annotations: frozenAnnotations,
     annotationIds,
-    ids: annotationIds,
-    count: frozenAnnotations.length,
   };
   Object.freeze(snapshot);
   return snapshot;

@@ -1,15 +1,15 @@
 import { fileForContentTypes, FileForRelThumbnail, to3dmodel } from '@jscadui/3mf-export';
+import type { ViewerModel } from '@manifold3d/protocol/wire/model.js';
 import { strToU8, zipSync } from 'fflate';
 
 import { packPositions } from '../scene/mesh-bridge.js';
-import type { PreviewPayload } from '../types.js';
 
 /**
  * Serialize a mesh payload as a 3MF file. 3MF preserves manifold topology
  * (indexed triangles share vertices), so this is the recommended export
  * format for further CAD/slicer usage.
  */
-export function export3mf(payload: PreviewPayload): Blob {
+export function export3mf(payload: ViewerModel): Blob {
   const id = '1';
   const positions = packPositions(payload);
   const model = to3dmodel({

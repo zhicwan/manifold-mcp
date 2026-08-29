@@ -43,7 +43,7 @@ function modelFrame(): ViewerModelFrame {
 describe('viewer model protocol', () => {
   it('round-trips a valid model header and binary frames without copying buffers', () => {
     const frame = modelFrame();
-    const header = parseModelHeader(createModelHeader(frame), { allowLegacy: false });
+    const header = parseModelHeader(createModelHeader(frame));
     const model = decodeViewerModel(header, frame);
 
     expect(header.protocolVersion).toBe(VIEWER_PROTOCOL_VERSION);
@@ -54,12 +54,13 @@ describe('viewer model protocol', () => {
     expect(model.features).toEqual(frame.features);
   });
 
-  it('accepts the immediately preceding header without protocolVersion', () => {
+  it('requires the current protocol version and complete metadata', () => {
     const current = createModelHeader(modelFrame());
-    const { protocolVersion: _ignored, ...legacy } = current;
+    const { protocolVersion: _ignored, ...unversioned } = current;
+    const { features: _features, ...missingFeatures } = current;
 
-    expect(parseModelHeader(legacy).protocolVersion).toBeUndefined();
-    expect(() => parseModelHeader(legacy, { allowLegacy: false })).toThrow(/protocolVersion is required/);
+    expect(() => parseModelHeader(unversioned)).toThrow(/protocolVersion is required/);
+    expect(() => parseModelHeader(missingFeatures)).toThrow(/features must be an array/);
   });
 
   it('rejects unsupported, incomplete, and malformed metadata', () => {
@@ -71,6 +72,7 @@ describe('viewer model protocol', () => {
     expect(isModelHeader({ ...header, volume: Number.NaN })).toBe(false);
     expect(isModelHeader({ ...header, bboxMax: [1, 1] })).toBe(false);
     expect(isModelHeader({ ...header, hasTriFeatureIds: 1 })).toBe(false);
+    expect(isModelHeader({ ...header, extra: true })).toBe(false);
     expect(
       isModelHeader({
         ...header,
@@ -95,15 +97,15 @@ describe('viewer model protocol', () => {
   });
 
   it('guards hello and model-version messages including protocol versions', () => {
-    expect(isHelloMessage(createHelloMessage('client-1'))).toBe(true);
+    expect(isHelloMessage(createHelloMessage('client-1', 'initial-token', false))).toBe(true);
     expect(createHelloMessage('client-1', 'resume-token', true)).toMatchObject({
       clientId: 'client-1',
       resumeToken: 'resume-token',
       resumed: true,
     });
     expect(isModelVersionMessage(createModelVersionMessage('v1'))).toBe(true);
-    expect(isHelloMessage({ kind: 'hello', clientId: 'legacy-client' })).toBe(true);
-    expect(isModelVersionMessage({ kind: 'model_version', modelVersion: 'legacy-v1' })).toBe(true);
+    expect(isHelloMessage({ kind: 'hello', clientId: 'unversioned-client' })).toBe(false);
+    expect(isModelVersionMessage({ kind: 'model_version', modelVersion: 'unversioned-v1' })).toBe(false);
     expect(isHelloMessage({ kind: 'hello', protocolVersion: 99, clientId: 'client-1' })).toBe(false);
     expect(
       isHelloMessage({
@@ -113,6 +115,15 @@ describe('viewer model protocol', () => {
         resumeToken: 'valid-token',
       }),
     ).toBe(false);
+    expect(
+      isHelloMessage({
+        kind: 'hello',
+        protocolVersion: 1,
+        clientId: 'client-1',
+        annotationRevision: 3,
+      }),
+    ).toBe(false);
+    expect(isHelloMessage({ ...createHelloMessage('client-1', 'resume-token', false), extra: true })).toBe(false);
     expect(isModelVersionMessage({ kind: 'model_version', protocolVersion: 1, modelVersion: '' })).toBe(false);
   });
 

@@ -1,12 +1,12 @@
 import * as THREE from 'three';
-import type { PreviewPayload } from '../types.js';
+import type { ViewerModel } from '@manifold3d/protocol/wire/model.js';
 
 /**
  * Build a three.js BufferGeometry from a Manifold mesh payload.
  * Computes vertex normals; with flatShading on the material, this still
  * yields crisp facets for axis-aligned geometry.
  */
-export function payloadToGeometry(payload: PreviewPayload): THREE.BufferGeometry {
+export function payloadToGeometry(payload: ViewerModel): THREE.BufferGeometry {
   const geometry = new THREE.BufferGeometry();
   const positions = packPositions(payload);
   geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
@@ -20,7 +20,7 @@ export function payloadToGeometry(payload: PreviewPayload): THREE.BufferGeometry
  * Returns the original buffer unchanged when numProp is already 3 to avoid
  * an unnecessary copy on the common path.
  */
-export function packPositions(payload: PreviewPayload): Float32Array {
+export function packPositions(payload: ViewerModel): Float32Array {
   if (payload.numProp < 3 || payload.vertProperties.length % payload.numProp !== 0) {
     throw new RangeError('Mesh vertex properties are not aligned to a valid position stride.');
   }

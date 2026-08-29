@@ -24,7 +24,6 @@ interface PreviewModule {
     host?: string,
   ) => Promise<{
     url: string;
-    port: number;
     close(): Promise<void>;
   }>;
 }
@@ -83,7 +82,7 @@ describe.skipIf(skipUnlessBuilt)('SEC-3: preview WS rejects bad Origin/Host', ()
   beforeAll(async () => {
     const mod = await loadModule();
     const handle = await mod.startPreviewServer(47471, '127.0.0.1');
-    port = handle.port;
+    port = Number(new URL(handle.url).port);
     wsUrl = `${handle.url.replace(/^http/, 'ws')}ws`;
     stop = () => handle.close();
   }, 30_000);
@@ -149,7 +148,7 @@ describe.skipIf(skipUnlessBuilt)('SEC-3: preview WS dev-mode allow-list', () => 
     process.env.NODE_ENV = 'development';
     const mod = await loadModule();
     const handle = await mod.startPreviewServer(47521, '127.0.0.1');
-    port = handle.port;
+    port = Number(new URL(handle.url).port);
     wsUrl = `${handle.url.replace(/^http/, 'ws')}ws`;
     stop = () => handle.close();
   }, 30_000);

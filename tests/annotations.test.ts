@@ -11,6 +11,8 @@ describe('isAnnotationsMessage', () => {
     expect(
       isAnnotationsMessage({
         kind: 'annotations',
+        protocolVersion: ANNOTATIONS_PROTOCOL_VERSION,
+        revision: 0,
         modelVersion: 'v1',
         items: [],
       }),
@@ -21,6 +23,8 @@ describe('isAnnotationsMessage', () => {
     expect(
       isAnnotationsMessage({
         kind: 'annotations',
+        protocolVersion: ANNOTATIONS_PROTOCOL_VERSION,
+        revision: 3,
         modelVersion: 'v2',
         items: [
           {
@@ -36,14 +40,14 @@ describe('isAnnotationsMessage', () => {
     ).toBe(true);
   });
 
-  it('accepts the immediate legacy shape and validates the revisioned current shape', () => {
+  it('requires the current protocol version and revision', () => {
     expect(
       isAnnotationsMessage({
         kind: 'annotations',
-        modelVersion: 'legacy-v1',
+        modelVersion: 'unversioned-v1',
         items: [],
       }),
-    ).toBe(true);
+    ).toBe(false);
     expect(createAnnotationsMessage('v2', 4, [])).toEqual({
       kind: 'annotations',
       protocolVersion: ANNOTATIONS_PROTOCOL_VERSION,
@@ -59,6 +63,7 @@ describe('isAnnotationsMessage', () => {
         items: [],
       }),
     ).toBe(false);
+    expect(isAnnotationsMessage({ ...createAnnotationsMessage('v2', 4, []), extra: true })).toBe(false);
   });
 
   it('returns false for null', () => {

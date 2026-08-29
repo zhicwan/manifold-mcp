@@ -52,7 +52,7 @@ describe('viewer annotation revisions', () => {
       expect(wire).not.toHaveProperty('state');
       expect(wire).not.toHaveProperty('batchId');
       expect(annotation).toMatchObject({ intent: 'comment', state: 'draft' });
-      store.cancelCurrentBatch();
+      store.cancelBatch(store.getDraftBatch().batchId);
       expect(store.getRevision()).toBe(3);
     } finally {
       uplink.dispose();

@@ -20,7 +20,7 @@
  * own the actual work:
  *   - sandbox-globals.ts   SEC-1 scrub + prototype freeze
  *   - sandbox-console.ts   per-run user-visible `console`
- *   - mesh-payload.ts      RUN-2/4 mesh -> wire payload
+ *   - model-artifact-builder.ts  RUN-2/4 mesh -> model artifact
  *   - runtime-location.ts  RUN-6 stack -> original source mapping
  */
 import { isMainThread, parentPort, threadId, workerData } from 'node:worker_threads';
@@ -39,7 +39,7 @@ import { compileSnippetTypeScript } from '../compiler/typescript-compiler.js';
 import { MILLIMETRES_HINT, type ModelArtifact, type RunRequest, type RunResult } from './protocol.js';
 import type { Issue } from '../validation/report.js';
 import type { AnyConstructor, ManifoldInstance, ManifoldMesh, Vec3 } from '../sandbox/manifold-types.js';
-import { buildModelArtifact } from './mesh-payload.js';
+import { buildModelArtifact, type MeshGeometryStats } from './model-artifact-builder.js';
 import { runtimeErrorSnippet, runtimeSourceLocation, upgradeIssueSnippet } from './runtime-location.js';
 import { createSandboxConsole } from './sandbox-console.js';
 import { scrubSandboxGlobals } from './sandbox-globals.js';
@@ -199,7 +199,7 @@ async function handleRun(req: RunRequest): Promise<void> {
     resultValue = userFn(TrackedManifold, TrackedCrossSection, TrackedMesh, sandboxConsole, undefined);
   } catch (e: unknown) {
     const err = e as Error;
-    const sourceLocation = await runtimeSourceLocation(err.stack, req.code, compiled.sourceMap);
+    const sourceLocation = await runtimeSourceLocation(err.stack, compiled.sourceMap);
     const snippet = stageOpts.suppressSnippet ? undefined : runtimeErrorSnippet(req.code, sourceLocation, err.stack);
     addError(report, {
       stage: 'runtime',
@@ -233,15 +233,7 @@ async function handleRun(req: RunRequest): Promise<void> {
   garbageCollectInstance(m);
 
   let mesh: ManifoldMesh | undefined;
-  let stats:
-    | {
-        volume: number;
-        surfaceArea: number;
-        genus: number;
-        bboxMin: [number, number, number];
-        bboxMax: [number, number, number];
-      }
-    | undefined;
+  let stats: MeshGeometryStats | undefined;
   try {
     const status = String(m.status());
     const isEmpty = !!m.isEmpty();
@@ -287,20 +279,20 @@ async function handleRun(req: RunRequest): Promise<void> {
     });
   }
 
-  let payload: ModelArtifact | undefined;
+  let artifact: ModelArtifact | undefined;
   if (mesh && stats && featureStore) {
-    payload = buildModelArtifact(mesh, featureStore, stats, req.description);
+    artifact = buildModelArtifact(mesh, featureStore, stats, req.description);
   }
 
   report.durationMs = Math.round(performance.now() - t0);
   cleanupAndReport(report);
   enforceSnippetInvariant(report, stageOpts.suppressSnippet);
 
-  if (payload) {
-    port.postMessage({ report, mesh: payload } satisfies RunResult, [
-      payload.vertProperties,
-      payload.triVerts,
-      payload.triFeatureIds,
+  if (artifact) {
+    port.postMessage({ report, artifact } satisfies RunResult, [
+      artifact.vertProperties,
+      artifact.triVerts,
+      artifact.triFeatureIds,
     ]);
   } else {
     port.postMessage({ report } satisfies RunResult);

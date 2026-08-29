@@ -147,8 +147,8 @@ export class FlyoutController {
 
   /**
    * Dismiss any currently-open flyout. By design this commits the
-   * in-flight draft -- "click outside to save" -- which is why the
-   * tool layer routes plain (non-Ctrl) document clicks here.
+   * in-flight draft -- "click outside to save" -- which is why the tool
+   * layer routes document clicks here while orbit mode is active.
    */
   dismissAll(): void {
     if (this.expandedId !== null) {

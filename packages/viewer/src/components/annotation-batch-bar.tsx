@@ -25,7 +25,7 @@ export function AnnotationBatchBar() {
     return null;
   }
 
-  const batch = marks.getDraftBatch();
+  const batch = marks.store.getDraftBatch();
   const attachAction = hostActions.actions.find(action => action.id === ATTACH_BATCH_ACTION);
   const fixAction = hostActions.actions.find(action => action.id === FIX_BATCH_ACTION);
   const hasHostBatchActions = attachAction !== undefined || fixAction !== undefined;
@@ -46,9 +46,9 @@ export function AnnotationBatchBar() {
   const finishLocally = (kind: 'freeze' | 'cancel'): void => {
     if (kind === 'freeze') {
       marks.commitOpenDraft();
-      marks.freezeBatch(batch.batchId);
+      marks.store.freezeBatch(batch.batchId);
     } else {
-      marks.cancelBatch(batch.batchId);
+      marks.store.cancelBatch(batch.batchId);
     }
     marks.flushAnnotations();
     viewerApi?.setMarkMode('orbit');
@@ -59,11 +59,11 @@ export function AnnotationBatchBar() {
       return;
     }
     marks.commitOpenDraft();
-    const committedDraft = marks.getDraftBatch();
+    const committedDraft = marks.store.getDraftBatch();
     if (committedDraft.annotationIds.length === 0) {
       return;
     }
-    if (!marks.sealBatch(committedDraft.batchId)) {
+    if (!marks.store.sealBatch(committedDraft.batchId)) {
       return;
     }
     marks.flushAnnotations();
@@ -76,16 +76,16 @@ export function AnnotationBatchBar() {
       })
       .then(status => {
         if (status.state === 'succeeded') {
-          marks.freezeBatch(committedDraft.batchId);
+          marks.store.freezeBatch(committedDraft.batchId);
         } else {
-          if (marks.restoreBatch(committedDraft.batchId)) {
+          if (marks.store.restoreBatch(committedDraft.batchId)) {
             viewerApi?.setMarkMode('annotate');
           }
         }
         marks.flushAnnotations();
       })
       .catch(() => {
-        const restored = marks.restoreBatch(committedDraft.batchId);
+        const restored = marks.store.restoreBatch(committedDraft.batchId);
         marks.flushAnnotations();
         if (restored) {
           viewerApi?.setMarkMode('annotate');

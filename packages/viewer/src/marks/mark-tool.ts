@@ -4,12 +4,12 @@ import type { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import type { AnnotationStore } from './annotation-store.js';
 import type { FeatureResolver } from './feature-resolver.js';
 import { eventToNdc, pickPoint, pickRegion } from './picker.js';
-import type { FlyoutLayer } from './flyout.js';
+import type { FlyoutLayer } from './flyout/index.js';
+import type { MarkMode } from './types.js';
 
 /**
  * Interaction mode for the mark tool:
- *   - 'orbit'    — default camera interaction. Legacy Ctrl+click/drag
- *                  remains available for comment annotations.
+ *   - 'orbit'    — default camera interaction.
  *   - 'annotate' — click creates a point comment; drag creates a region
  *                  comment and opens its flyout.
  *   - 'select'   — click/drag creates a pending point/region selection
@@ -19,7 +19,7 @@ import type { FlyoutLayer } from './flyout.js';
  *
  * Gesture state machine:
  *
- *   idle ──mousedown (mode or Ctrl)─► armed
+ *   idle ──mousedown (armed mode)────► armed
  *   armed ──move>threshold──────────► dragging
  *   armed ──mouseup─────────────────► point pick
  *   dragging ──mouseup──────────────► region pick
@@ -27,14 +27,11 @@ import type { FlyoutLayer } from './flyout.js';
  * If the gesture begins inside a flyout, we let it bubble (so users can
  * type / click delete) and skip the state machine entirely.
  */
-export type MarkToolMode = 'orbit' | 'annotate' | 'select';
-
 export class MarkTool {
   private readonly rubberBand: HTMLDivElement;
   private enabled = true;
   private state: 'idle' | 'armed' | 'dragging' = 'idle';
-  private mode: MarkToolMode = 'orbit';
-  private gestureIntent: 'comment' | 'selection' = 'comment';
+  private mode: MarkMode = 'orbit';
   private startScreen = { x: 0, y: 0 };
   private startNdc = new THREE.Vector2();
   private endNdc = new THREE.Vector2();
@@ -50,7 +47,7 @@ export class MarkTool {
     private readonly getMesh: () => THREE.Mesh | null,
     private readonly getResolver: () => FeatureResolver | null,
     /** Notified whenever the mode changes (from setMode or Escape). */
-    private readonly onModeChange?: (mode: MarkToolMode) => void,
+    private readonly onModeChange?: (mode: MarkMode) => void,
     /** Notified when a pending selection is ready to be attached. */
     private readonly onSelectionCreated?: (id: string) => void,
   ) {
@@ -88,10 +85,6 @@ export class MarkTool {
     delete document.body.dataset.markMode;
   }
 
-  getMode(): MarkToolMode {
-    return this.mode;
-  }
-
   setEnabled(enabled: boolean): void {
     if (this.enabled === enabled) {
       return;
@@ -106,7 +99,7 @@ export class MarkTool {
    * Switch interaction mode. Cancels any in-flight gesture, updates the
    * cursor affordance, and notifies the UI store. Idempotent.
    */
-  setMode(mode: MarkToolMode): void {
+  setMode(mode: MarkMode): void {
     if (this.mode === mode) {
       return;
     }
@@ -152,14 +145,12 @@ export class MarkTool {
     if (!this.enabled || ev.button !== 0) {
       return;
     }
-    const ctrl = ev.ctrlKey || ev.metaKey;
-    if (this.mode === 'orbit' && !ctrl) {
+    if (this.mode === 'orbit') {
       return;
     }
     if (this.flyouts.ownsTarget(ev.target)) {
       return;
     }
-    this.gestureIntent = this.mode === 'select' ? 'selection' : 'comment';
     this.state = 'armed';
     this.startScreen = { x: ev.clientX, y: ev.clientY };
     this.startNdc.copy(eventToNdc(ev, this.canvas));
@@ -229,12 +220,12 @@ export class MarkTool {
   }
 
   /**
-   * Any plain (non-Ctrl) click outside flyouts dismisses an open flyout
-   * — but only in orbit mode. In an explicit tool mode plain clicks are
+   * Any click outside flyouts dismisses an open flyout in orbit mode.
+   * In an explicit tool mode clicks are
    * the marking gesture, so they must not double as "dismiss".
    */
   private handleDocClick(ev: MouseEvent): void {
-    if (!this.enabled || ev.ctrlKey || ev.metaKey || this.mode !== 'orbit') {
+    if (!this.enabled || this.mode !== 'orbit') {
       return;
     }
     if (this.flyouts.ownsTarget(ev.target)) {
@@ -262,13 +253,10 @@ export class MarkTool {
     triIds: number[];
     partLabel?: string;
   }): void {
-    if (this.gestureIntent === 'selection') {
+    if (this.mode === 'select') {
       const selection = this.store.addSelection(input);
       this.onSelectionCreated?.(selection.id);
       return;
-    }
-    if (this.mode === 'orbit') {
-      this.setMode('annotate');
     }
     const comment = this.store.addComment({ ...input, note: '' });
     this.flyouts.openExpanded(comment.id);

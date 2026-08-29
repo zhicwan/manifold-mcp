@@ -197,18 +197,3 @@ body[data-mark-mode='select'] #view {
 .marks-flyout-btn-primary:hover {
   background: color-mix(in srgb, var(--color-primary) 90%, transparent);
 }
-
-main[data-annotation-ui='compact'] .marks-flyout-body {
-  width: min(220px, calc(100vw - 112px));
-  padding: 8px;
-  gap: 6px;
-}
-
-main[data-annotation-ui='compact'] .marks-flyout-body textarea.marks-flyout-textarea {
-  min-height: 48px;
-  resize: none;
-}
-
-main[data-annotation-ui='compact'] .marks-flyout-hint {
-  display: none;
-}

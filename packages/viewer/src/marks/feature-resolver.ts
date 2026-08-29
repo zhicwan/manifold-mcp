@@ -1,6 +1,5 @@
 import * as THREE from 'three';
-
-import type { PreviewFeature, PreviewPayload } from '../types.js';
+import type { ViewerFeature, ViewerModel } from '@manifold3d/protocol/wire/model.js';
 
 /**
  * Resolves a triangle index (or a set of them) back to a semantic
@@ -18,7 +17,7 @@ import type { PreviewFeature, PreviewPayload } from '../types.js';
  *     a coarsely tessellated face doesn't lose to a fine-tessellated one.
  */
 export class FeatureResolver {
-  private readonly features: PreviewFeature[];
+  private readonly features: ViewerFeature[];
   private readonly triFeatureIds: Uint32Array;
   private readonly positions: Float32Array;
   private readonly indices: Uint32Array;
@@ -27,7 +26,7 @@ export class FeatureResolver {
   private readonly featureTriCount = new Map<number, number>();
   private readonly featureTriIds = new Map<number, Uint32Array>();
 
-  constructor(payload: PreviewPayload) {
+  constructor(payload: ViewerModel) {
     this.features = payload.features;
     this.triFeatureIds = payload.triFeatureIds;
     this.positions = payload.vertProperties;

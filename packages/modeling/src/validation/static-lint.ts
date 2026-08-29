@@ -80,7 +80,7 @@ export const KNOWN_CROSSSECTION_STATIC = new Set([
   'hull',
 ]);
 
-export interface StaticAnalysisResult {
+interface StaticAnalysisResult {
   resultAssigned: boolean;
   forbidden: Issue[];
   unknownApi: Issue[];
@@ -98,7 +98,7 @@ export interface StaticStageOptions {
 }
 
 /** Parse + scan AST. Returns lint findings. */
-export function analyzeStatic(code: string, opts: StaticStageOptions = {}): StaticAnalysisResult {
+function analyzeStatic(code: string, opts: StaticStageOptions = {}): StaticAnalysisResult {
   const out: StaticAnalysisResult = {
     resultAssigned: false,
     forbidden: [],
@@ -398,7 +398,7 @@ function isRotateCall(call: ts.CallExpression): boolean {
   return ts.isPropertyAccessExpression(callee) && callee.name.text === 'rotate';
 }
 
-export function looksLikeRadians(code: string, sourceFile: ts.SourceFile, args: ts.NodeArray<ts.Expression>): boolean {
+function looksLikeRadians(code: string, sourceFile: ts.SourceFile, args: ts.NodeArray<ts.Expression>): boolean {
   // VAL-2: only fire when the source text references Math.PI or a
   // radian-named identifier. Magnitude-based heuristics on plain
   // numeric literals false-positive on common degree values like

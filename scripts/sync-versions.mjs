@@ -6,9 +6,9 @@
  * as that workspace's npm `version` lifecycle script so an `npm version <bump>
  * --workspace @zhicwan/manifold3d-mcp` keeps everything in sync.
  *
- * Uses targeted, format-preserving string replacement (not full JSON
- * re-serialization) so it does not reflow unrelated formatting. `check-sync.mjs`
- * asserts the result is consistent.
+ * Updates explicit JSON fields so malformed manifests fail loudly instead of
+ * being skipped by text replacement. `check-sync.mjs` asserts the result is
+ * consistent.
  */
 import { readFileSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
@@ -28,7 +28,24 @@ function write(relativePath, contents) {
   writeFileSync(resolve(repoRoot, relativePath), contents);
 }
 
-const version = JSON.parse(read(publicPackagePath)).version;
+function readJson(relativePath) {
+  try {
+    return JSON.parse(read(relativePath));
+  } catch (error) {
+    throw new Error(`Could not parse ${relativePath}: ${error.message}`, { cause: error });
+  }
+}
+
+function writeJson(relativePath, value) {
+  write(relativePath, `${JSON.stringify(value, null, 2)}\n`);
+  changed.push(relativePath);
+}
+
+const publicPackage = readJson(publicPackagePath);
+const version = publicPackage.version;
+if (typeof version !== 'string') {
+  throw new Error(`${publicPackagePath} must contain a string version.`);
+}
 const semver = /^(\d+)\.(\d+)\.(\d+)(?:[-+].*)?$/.exec(version);
 if (!semver) {
   process.stderr.write(`sync-versions: invalid ${publicPackagePath} version "${version}"\n`);
@@ -39,51 +56,56 @@ const range = `${major}.${minor}.x`;
 
 const changed = [];
 
-/** Replace the first top-level `"version": "..."` value in a JSON document. */
-function replaceTopLevelVersion(relativePath) {
-  const before = read(relativePath);
-  const after = before.replace(/("version"\s*:\s*)"[^"]*"/, `$1"${version}"`);
-  if (after !== before) {
-    write(relativePath, after);
-    changed.push(relativePath);
+function setTopLevelVersion(relativePath) {
+  const manifest = readJson(relativePath);
+  if (typeof manifest.version !== 'string') {
+    throw new Error(`${relativePath} must contain a string top-level version.`);
+  }
+  if (manifest.version !== version) {
+    manifest.version = version;
+    writeJson(relativePath, manifest);
   }
 }
 
-/**
- * Replace the version of the `manifold` plugin entry inside a marketplace
- * document, without touching the top-level `metadata.version`.
- */
-function replaceMarketplacePluginVersion(relativePath) {
-  const before = read(relativePath);
-  const after = before.replace(/("name"\s*:\s*"manifold"[\s\S]*?"version"\s*:\s*)"[^"]*"/, `$1"${version}"`);
-  if (after !== before) {
-    write(relativePath, after);
-    changed.push(relativePath);
+function setMarketplacePluginVersion(relativePath) {
+  const marketplace = readJson(relativePath);
+  const plugin = marketplace.plugins?.find(candidate => candidate?.name === 'manifold');
+  if (!plugin || typeof plugin.version !== 'string') {
+    throw new Error(`${relativePath} must contain a versioned plugin entry named "manifold".`);
+  }
+  if (plugin.version !== version) {
+    plugin.version = version;
+    writeJson(relativePath, marketplace);
   }
 }
 
-/** Repin the `@zhicwan/manifold3d-mcp@x.y.x` range in plugin/.mcp.json. */
-function replaceMcpRange(relativePath) {
-  const before = read(relativePath);
-  const escaped = packageName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const pattern = new RegExp(`(${escaped}@)\\d+\\.\\d+\\.(?:\\d+|x)`, 'g');
-  const after = before.replace(pattern, `$1${range}`);
-  if (after !== before) {
-    write(relativePath, after);
-    changed.push(relativePath);
+function setMcpRange(relativePath) {
+  const manifest = readJson(relativePath);
+  const args = manifest.mcpServers?.['manifold3d-mcp']?.args;
+  if (!Array.isArray(args)) {
+    throw new Error(`${relativePath} must contain an args array for mcpServers.manifold3d-mcp.`);
+  }
+  const packageIndex = args.findIndex(arg => typeof arg === 'string' && arg.startsWith(`${packageName}@`));
+  if (packageIndex < 0) {
+    throw new Error(`${relativePath} must include a versioned ${packageName} package spec.`);
+  }
+  const packageSpec = `${packageName}@${range}`;
+  if (args[packageIndex] !== packageSpec) {
+    args[packageIndex] = packageSpec;
+    writeJson(relativePath, manifest);
   }
 }
 
-replaceTopLevelVersion('plugin/plugin.json');
-replaceTopLevelVersion('plugin/.claude-plugin/plugin.json');
-replaceMarketplacePluginVersion('.github/plugin/marketplace.json');
-replaceMarketplacePluginVersion('.claude-plugin/marketplace.json');
-replaceMcpRange('plugin/.mcp.json');
+setTopLevelVersion('plugin/plugin.json');
+setTopLevelVersion('plugin/.claude-plugin/plugin.json');
+setMarketplacePluginVersion('.github/plugin/marketplace.json');
+setMarketplacePluginVersion('.claude-plugin/marketplace.json');
+setMcpRange('plugin/.mcp.json');
 
 if (changed.length === 0) {
   process.stdout.write(`sync-versions: already in sync at ${version}\n`);
 } else {
   process.stdout.write(
-    `sync-versions: set version ${version} / range @${range} in:\n${changed.map(path => `  - ${path}`).join('\n')}\n`,
+    `sync-versions: set version ${version} / package spec ${packageName}@${range} in:\n${changed.map(path => `  - ${path}`).join('\n')}\n`,
   );
 }

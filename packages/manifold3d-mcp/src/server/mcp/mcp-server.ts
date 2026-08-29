@@ -59,8 +59,7 @@ export async function startMcpServer(opts: McpServerOptions): Promise<McpServerH
   let acceptingToolCalls = true;
   let drainPromise: Promise<void> | undefined;
 
-  // eslint-disable-next-line @typescript-eslint/require-await -- TST-8 follow-up: handler shape is dictated by SDK; refactor in next phase
-  server.setRequestHandler(ListToolsRequestSchema, async () => ({
+  server.setRequestHandler(ListToolsRequestSchema, () => ({
     tools: [
       {
         name: 'validate_script',

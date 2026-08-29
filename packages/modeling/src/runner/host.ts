@@ -1,7 +1,7 @@
 /**
  * Host-side runner: each Runner instance serializes its own requests, creates
  * one disposable Worker per request, enforces an end-to-end timeout, and
- * returns a Report (plus optional mesh) only after that Worker has exited.
+ * returns a Report (plus an optional model artifact) only after that Worker has exited.
  *
  * Concurrency model: a 1-slot queue per Runner. Calls made through one
  * instance never overlap, while independent Runner instances can execute
@@ -30,7 +30,7 @@ import { Worker } from 'node:worker_threads';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
-import { addError, type Report, emptyReport } from '../validation/report.js';
+import { addError, emptyReport } from '../validation/report.js';
 import { MILLIMETRES_HINT, type RunRequest, type RunResult } from './protocol.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -144,11 +144,6 @@ export class Runner {
       () => undefined,
     );
     return this.disposePromise;
-  }
-
-  /** Alias for dispose(). */
-  shutdown(): Promise<void> {
-    return this.dispose();
   }
 
   private async runOnce(req: RunRequest, opts: RunnerOptions, deadline: number, timeoutMs: number): Promise<RunResult> {
@@ -395,25 +390,13 @@ export class Runner {
   }
 }
 
-const defaultRunner = new Runner();
-
-/** @deprecated Construct a Runner and call runner.run(). */
-export function run(req: RunRequest, opts: RunnerOptions = {}): Promise<RunResult> {
-  return defaultRunner.run(req, opts);
-}
-
-/** @deprecated Dispose the Runner instance owned by your caller. */
-export function shutdown(): Promise<void> {
-  return defaultRunner.dispose();
-}
-
 /** Test hook: active request thread, cleared before run() resolves. */
-export function _currentThreadId(runner: Runner = defaultRunner): number | undefined {
+export function _currentThreadId(runner: Runner): number | undefined {
   return activeThreadIds.get(runner);
 }
 
 /** Test hook: most recently spawned request thread. */
-export function _lastThreadId(runner: Runner = defaultRunner): number | undefined {
+export function _lastThreadId(runner: Runner): number | undefined {
   return lastThreadIds.get(runner);
 }
 
@@ -495,6 +478,3 @@ function crashResult(err: unknown, maxOldGenMb: number): RunResult {
   }
   return { report: r };
 }
-
-export type { MeshPayload, ModelArtifact, RunRequest, RunResult } from './protocol.js';
-export type { Report };

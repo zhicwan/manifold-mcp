@@ -12,8 +12,6 @@ import { AnnotationBatchBar } from './annotation-batch-bar';
 import { ViewerRuntimeProvider } from '@/viewer-runtime';
 import type { ViewerSlots } from './viewer-slots';
 
-export type { ViewerSlots } from './viewer-slots';
-
 export interface ViewerAppProps {
   readonly slots?: ViewerSlots;
   /**
@@ -21,8 +19,6 @@ export interface ViewerAppProps {
    * one-Viewer-per-page entry uses "default".
    */
   readonly resumeIdentity?: string;
-  /** Compact, manually-opened annotation UI for narrow embedded canvases. */
-  readonly annotationUi?: 'standard' | 'compact';
 }
 
 /**
@@ -35,25 +31,17 @@ export interface ViewerAppProps {
  *   center    — ModeHint while a mark tool is armed; EmptyState before
  *               any model arrives
  */
-export function ViewerApp({ slots = {}, resumeIdentity = 'default', annotationUi = 'standard' }: ViewerAppProps) {
+export function ViewerApp({ slots = {}, resumeIdentity = 'default' }: ViewerAppProps) {
   return (
     <ViewerStoreProvider>
       <ViewerRuntimeProvider>
-        <ViewerShell slots={slots} resumeIdentity={resumeIdentity} annotationUi={annotationUi} />
+        <ViewerShell slots={slots} resumeIdentity={resumeIdentity} />
       </ViewerRuntimeProvider>
     </ViewerStoreProvider>
   );
 }
 
-function ViewerShell({
-  slots,
-  resumeIdentity,
-  annotationUi,
-}: {
-  slots: ViewerSlots;
-  resumeIdentity: string;
-  annotationUi: 'standard' | 'compact';
-}) {
+function ViewerShell({ slots, resumeIdentity }: { slots: ViewerSlots; resumeIdentity: string }) {
   const { resolvedTheme } = useTheme();
   const viewerApi = useViewerState(s => s.viewerApi);
 
@@ -65,7 +53,7 @@ function ViewerShell({
   }, [viewerApi, resolvedTheme]);
 
   return (
-    <main className="relative h-dvh w-full overflow-hidden bg-background" data-annotation-ui={annotationUi}>
+    <main className="relative h-dvh w-full overflow-hidden bg-background">
       <ViewerCanvas resumeIdentity={resumeIdentity} />
       {slots.sceneLayers}
       <EmptyState />

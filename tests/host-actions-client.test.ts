@@ -226,11 +226,23 @@ describe('HostActionsClient', () => {
       getInvocationContext: () => ({ modelVersion: 'v1', annotationRevision: 0 }),
       createRequestId: () => 'identity-request',
     });
-    client.receiveHello({ kind: 'hello', protocolVersion: 1, clientId: 'client-1' });
+    client.receiveHello({
+      kind: 'hello',
+      protocolVersion: 1,
+      clientId: 'client-1',
+      resumeToken: 'token-1',
+      resumed: false,
+    });
     client.receiveManifest(createHostActionsManifest([action]));
     const terminal = client.invokeAndWait(action.id);
 
-    client.receiveHello({ kind: 'hello', protocolVersion: 1, clientId: 'client-2' });
+    client.receiveHello({
+      kind: 'hello',
+      protocolVersion: 1,
+      clientId: 'client-2',
+      resumeToken: 'token-2',
+      resumed: false,
+    });
 
     await expect(terminal).rejects.toThrow(/identity changed/);
   });

@@ -3,11 +3,12 @@ import type { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 
 import { AnnotationStore } from './annotation-store.js';
 import { FeatureResolver } from './feature-resolver.js';
-import { FlyoutLayer } from './flyout.js';
+import { FlyoutLayer } from './flyout/index.js';
 import { HoverHighlight } from './hover-highlight.js';
 import { MarkerRenderer } from './marker-renderer.js';
-import { MarkTool, type MarkToolMode } from './mark-tool.js';
-import type { PreviewPayload } from '../types.js';
+import { MarkTool } from './mark-tool.js';
+import type { MarkMode } from './types.js';
+import type { ViewerModel } from '@manifold3d/protocol/wire/model.js';
 
 export interface MarksDeps {
   scene: THREE.Scene;
@@ -18,7 +19,7 @@ export interface MarksDeps {
   getMesh(): THREE.Mesh | null;
   requestRender(): void;
   /** Notified when the mark tool's interaction mode changes. */
-  onModeChange?(mode: MarkToolMode): void;
+  onModeChange?(mode: MarkMode): void;
   /** Notified after a non-empty annotation edit is explicitly committed. */
   onAnnotationCommit?(): void;
   /** Receives a pending selection id so ViewerCanvas can attach it. */
@@ -70,12 +71,11 @@ export function installMarks(deps: MarksDeps): MarksHandle {
 
   return {
     store,
-    flyouts,
-    setMode(mode: MarkToolMode): void {
+    setMode(mode: MarkMode): void {
       tool.setMode(mode);
     },
-    getMode(): MarkToolMode {
-      return tool.getMode();
+    commitOpenDraft(): void {
+      flyouts.dismissAll();
     },
     frame(): void {
       flyouts.updatePositions();
@@ -83,7 +83,7 @@ export function installMarks(deps: MarksDeps): MarksHandle {
     setModelVersion(v: string): void {
       store.setModelVersion(v);
     },
-    setPayload(payload: PreviewPayload): void {
+    setPayload(payload: ViewerModel): void {
       // Build a fresh resolver per model so old per-feature AABBs are
       // discarded along with the old mesh.
       resolver = payload.features.length > 0 && payload.triFeatureIds.length > 0 ? new FeatureResolver(payload) : null;
@@ -106,12 +106,11 @@ export function installMarks(deps: MarksDeps): MarksHandle {
 
 export interface MarksHandle {
   store: AnnotationStore;
-  flyouts: FlyoutLayer;
-  setMode(mode: MarkToolMode): void;
-  getMode(): MarkToolMode;
+  setMode(mode: MarkMode): void;
+  commitOpenDraft(): void;
   frame(): void;
   setModelVersion(v: string): void;
-  setPayload(payload: PreviewPayload): void;
+  setPayload(payload: ViewerModel): void;
   setImmersivePresenting(presenting: boolean): void;
   dispose(): void;
 }

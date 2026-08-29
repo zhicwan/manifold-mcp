@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest';
+import type { ViewerModel } from '../packages/protocol/src/wire/model.js';
 
 import { packPositions } from '../packages/viewer/src/scene/mesh-bridge.js';
-import type { PreviewPayload } from '../packages/viewer/src/types.js';
 
-function payload(numProp: number, vertProperties: number[]): PreviewPayload {
+function payload(numProp: number, vertProperties: number[]): ViewerModel {
   return {
     numProp,
     triangles: 0,

@@ -30,8 +30,6 @@ export interface CaptureModelInput {
 
 export interface CommittedModel {
   /** Monotonically increasing within one ModelingSession. */
-  id: number;
-  /** Alias for id that makes ordering intent explicit to consumers. */
   revision: number;
   artifact: ModelArtifact;
 }
@@ -102,7 +100,7 @@ export class ModelingEngine {
 
   async execute(input: ExecuteModelInput, options: RunnerOptions = {}): Promise<ExecutionResult> {
     this.assertActive();
-    const { report, mesh } = await this.runner.run(
+    const { report, artifact } = await this.runner.run(
       {
         mode: 'execute',
         code: input.code,
@@ -111,7 +109,7 @@ export class ModelingEngine {
       },
       options,
     );
-    return mesh ? { report, artifact: mesh } : { report };
+    return artifact ? { report, artifact } : { report };
   }
 
   async capture(input: CaptureModelInput): Promise<RenderResult> {
@@ -201,7 +199,6 @@ export class ModelingSession {
 
       const revision = this.nextRevision;
       const model: CommittedModel = Object.freeze({
-        id: revision,
         revision,
         artifact: executionResult.artifact,
       });

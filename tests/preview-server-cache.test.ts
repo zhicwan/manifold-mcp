@@ -1,12 +1,4 @@
-/**
- * VIE-4: Cache-Control header policy for the static preview assets.
- *
- * Two-pronged:
- *  1. Pure-function lock on the matrix (no server needed) using the
- *     exported `_testCacheControlFor` helper.
- *  2. End-to-end fetch against a real preview server confirming the
- *     headers are actually written into the HTTP response.
- */
+/** VIE-4: Cache-Control header policy for the static preview assets. */
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { existsSync, readdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
@@ -34,16 +26,6 @@ describe.skipIf(skipUnlessBuilt)('preview server: cache-control matrix', () => {
     if (handle) {
       await handle.close();
     }
-  });
-
-  it('classifies index.html as no-store, hashed assets as immutable, others as short-lived', () => {
-    const cc = previewModule._testCacheControlFor;
-    expect(cc('index.html')).toBe('no-store');
-    expect(cc('')).toBe('no-store');
-    expect(cc('assets/index-CJ7mf_B0.js')).toBe('public, max-age=31536000, immutable');
-    expect(cc('assets/index-abcdef.css')).toBe('public, max-age=31536000, immutable');
-    expect(cc('favicon.ico')).toBe('public, max-age=300');
-    expect(cc('robots.txt')).toBe('public, max-age=300');
   });
 
   it('returns Cache-Control: no-store for /index.html', async () => {

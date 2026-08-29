@@ -6,9 +6,7 @@ import type { FeatureResolver } from './feature-resolver.js';
 /**
  * Alt-hover preview: when the user holds Alt and moves the cursor over
  * the model, every triangle that belongs to the same feature lights up
- * cyan. Gives an explicit "what would I be selecting" preview without
- * implying that a plain click does anything (which it doesn't — marks
- * require Ctrl-modified gestures).
+ * cyan without changing the active interaction tool.
  *
  * Performance:
  *   - Raycast happens on mousemove but the highlight geometry is only
@@ -16,9 +14,6 @@ import type { FeatureResolver } from './feature-resolver.js';
  *     last featureIdx).
  *   - Move handling is gated on requestAnimationFrame so we coalesce
  *     bursts of mousemove events into at most one raycast per frame.
- *   - Picking is suppressed during a Ctrl-modified gesture (drag-select)
- *     since OrbitControls is also disabled then; rendering an
- *     intermediate highlight would distract from the rubber-band.
  */
 /**
  * Cache entry for a previously-hovered feature. We keep both the
@@ -32,16 +27,18 @@ interface FeatureGeomCacheEntry {
   geometry: THREE.BufferGeometry;
 }
 
+type PointerPosition = Pick<MouseEvent, 'clientX' | 'clientY'>;
+
 export class HoverHighlight {
   private readonly overlay: THREE.Mesh;
   private enabled = true;
   private currentFeatureIdx = -1;
-  private pendingEvent: MouseEvent | null = null;
-  private lastMouseEvent: MouseEvent | null = null;
+  private pendingEvent: PointerPosition | null = null;
+  private lastMouseEvent: PointerPosition | null = null;
   private raf = 0;
   private listeners: Array<() => void> = [];
   /**
-   * VIE-5: per-feature highlight geometry cache. The user typically
+   * Per-feature highlight geometry cache. The user typically
    * sweeps a cursor back and forth over the same handful of features;
    * without this cache each pass over a 5k-tri feature reallocates
    * 60KB of Float32 + a BufferGeometry. With it we hit cache on the
@@ -76,15 +73,9 @@ export class HoverHighlight {
       if (!this.enabled) {
         return;
       }
-      this.lastMouseEvent = ev;
-      // Don't compete with marker placement / rubber band.
-      if (ev.ctrlKey || ev.metaKey) {
-        this.clear();
-        return;
-      }
+      this.lastMouseEvent = { clientX: ev.clientX, clientY: ev.clientY };
       // Highlight is opt-in: only when Alt is held. Without this gate
-      // the cyan tint shows up on every hover, which subtly suggests
-      // that plain click is interactive (it isn't).
+      // the cyan tint shows up on every hover.
       if (!ev.altKey) {
         this.clear();
         return;
@@ -99,10 +90,7 @@ export class HoverHighlight {
       if (!this.enabled || ev.key !== 'Alt' || !this.lastMouseEvent) {
         return;
       }
-      // Replay the last mouse event with altKey now true, by passing a
-      // synthetic shape the rest of the pipeline can read.
-      const replay = withAltKey(this.lastMouseEvent, true);
-      this.scheduleRefresh(replay);
+      this.scheduleRefresh(this.lastMouseEvent);
     };
     const onKeyUp = (ev: KeyboardEvent): void => {
       if (ev.key === 'Alt') {
@@ -122,7 +110,7 @@ export class HoverHighlight {
     ];
   }
 
-  private scheduleRefresh(ev: MouseEvent): void {
+  private scheduleRefresh(ev: PointerPosition): void {
     this.pendingEvent = ev;
     if (this.raf === 0) {
       this.raf = requestAnimationFrame(this.processPending);
@@ -134,7 +122,7 @@ export class HoverHighlight {
     this.clear();
     // Feature indices are only meaningful within one model — a fresh
     // model's "feature 3" is a totally different region. Drop every
-    // cached geometry so we don't leak GPU buffers (VIE-5).
+    // cached geometry so we don't leak GPU buffers.
     for (const entry of this.featureGeomCache.values()) {
       entry.geometry.dispose();
     }
@@ -275,29 +263,4 @@ export class HoverHighlight {
     this.currentFeatureIdx = -1;
     this.requestRender();
   }
-}
-
-/**
- * Build a shallow copy of a mouse event with `altKey` overridden so the
- * raycast pipeline sees the modifier even though the original event
- * predates the keypress. We only read clientX/clientY plus modifier
- * flags downstream so a structural copy is sufficient.
- */
-function withAltKey(src: MouseEvent, altKey: boolean): MouseEvent {
-  return {
-    clientX: src.clientX,
-    clientY: src.clientY,
-    altKey,
-    ctrlKey: src.ctrlKey,
-    metaKey: src.metaKey,
-    shiftKey: src.shiftKey,
-    button: src.button,
-    target: src.target,
-    preventDefault() {
-      // no-op: synthetic event used internally for replaying mouse coords
-    },
-    stopPropagation() {
-      // no-op: synthetic event used internally for replaying mouse coords
-    },
-  } as unknown as MouseEvent;
 }

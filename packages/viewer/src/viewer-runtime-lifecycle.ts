@@ -1,13 +1,21 @@
-type ContributionDisposer = () => void | Promise<void>;
+type Cleanup = () => void | Promise<void>;
+type SynchronousCleanup = () => void;
 
 interface ContributionEntry {
-  dispose: ContributionDisposer;
+  dispose: Cleanup;
   promise: Promise<void> | null;
 }
 
 export interface ViewerSceneCleanupRegistry {
-  register(dispose: ContributionDisposer): () => Promise<void>;
+  register(dispose: Cleanup): () => Promise<void>;
   disposeAll(): Promise<void>;
+}
+
+export interface ViewerGenerationCleanupPlan {
+  stop(): void;
+  readonly beforeContributions: readonly SynchronousCleanup[];
+  disposeContributions(): void | Promise<void>;
+  readonly afterContributions: readonly Cleanup[];
 }
 
 export function createViewerSceneCleanupRegistry(): ViewerSceneCleanupRegistry {
@@ -21,7 +29,7 @@ export function createViewerSceneCleanupRegistry(): ViewerSceneCleanupRegistry {
   };
 
   return {
-    register(dispose: ContributionDisposer): () => Promise<void> {
+    register(dispose: Cleanup): () => Promise<void> {
       const entry: ContributionEntry = { dispose, promise: null };
       entries.add(entry);
       return () => start(entry);
@@ -37,4 +45,47 @@ export function createViewerSceneCleanupRegistry(): ViewerSceneCleanupRegistry {
       }
     },
   };
+}
+
+export function createViewerGenerationDisposer(plan: ViewerGenerationCleanupPlan): () => Promise<void> {
+  let disposePromise: Promise<void> | null = null;
+
+  return () => {
+    if (disposePromise) {
+      return disposePromise;
+    }
+
+    const failures: unknown[] = [];
+    attemptSync(plan.stop, failures);
+    for (const cleanup of plan.beforeContributions) {
+      attemptSync(cleanup, failures);
+    }
+
+    disposePromise = (async () => {
+      await attemptAsync(plan.disposeContributions, failures);
+      for (const cleanup of plan.afterContributions) {
+        await attemptAsync(cleanup, failures);
+      }
+      if (failures.length > 0) {
+        throw new AggregateError(failures, 'Viewer generation cleanup failed.');
+      }
+    })();
+    return disposePromise;
+  };
+}
+
+function attemptSync(cleanup: SynchronousCleanup, failures: unknown[]): void {
+  try {
+    cleanup();
+  } catch (error) {
+    failures.push(error);
+  }
+}
+
+async function attemptAsync(cleanup: Cleanup, failures: unknown[]): Promise<void> {
+  try {
+    await cleanup();
+  } catch (error) {
+    failures.push(error);
+  }
 }

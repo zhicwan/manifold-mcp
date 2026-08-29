@@ -6,7 +6,7 @@
 import type { ViewerFeature } from '@manifold3d/protocol/wire/model.js';
 import type { Report } from '../validation/report.js';
 
-export type RunMode = 'validate' | 'execute';
+type RunMode = 'validate' | 'execute';
 
 export const MILLIMETRES_HINT = 'Manifold has no intrinsic units; this server interprets coordinates as millimetres.';
 
@@ -55,8 +55,5 @@ export interface RunResult {
   // From the worker's view of the report (errors/warnings/hints/stats etc.)
   report: Report;
   // Present on successful execute mode.
-  mesh?: ModelArtifact;
+  artifact?: ModelArtifact;
 }
-
-/** @deprecated Use ModelArtifact for the full modeling result. */
-export type MeshPayload = ModelArtifact;

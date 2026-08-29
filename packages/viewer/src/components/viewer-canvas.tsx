@@ -1,14 +1,16 @@
 import { useEffect, useRef } from 'react';
 
-import { HostActionsClient } from '@/host-actions/client';
+import { HostActionsClient, LOCATION_SELECTION_ACTION_ID } from '@/host-actions/client';
 import { installMarks } from '@/marks';
+import type { MarkMode } from '@/marks/types';
 import { installAnnotationsUplink } from '@/marks/ws-uplink';
 import { acquireViewerCanvasOwnership, type ViewerCanvasOwnership } from '@/scene/viewer-canvas-ownership';
 import { Viewer, type RenderMode, type ViewerTheme } from '@/scene/viewer';
-import { useViewerStore, type MarkMode, type ViewerStore } from '@/store';
+import { useViewerStore, type ViewerStore } from '@/store';
 import { connectMeshFeed, validateResumeIdentity, type MeshFeedHandle } from '@/transport/ws-client';
-import type { PreviewPayload } from '@/types';
-import { useViewerRuntimeHost, type ViewerRuntime, type ViewerRuntimeHost } from '@/viewer-runtime';
+import { createViewerGenerationDisposer } from '@/viewer-runtime-lifecycle';
+import { useViewerRuntimeHost, type ViewerRuntimeHost } from '@/viewer-runtime';
+import type { ViewerModel } from '@manifold3d/protocol/wire/model.js';
 
 interface ViewerGeneration {
   readonly viewer: Viewer;
@@ -94,10 +96,10 @@ async function startViewerGeneration(
   const stableResumeIdentity = validateResumeIdentity(resumeIdentity);
   let mounted = true;
   const viewer = new Viewer(canvas);
+  viewer.setRenderMode(viewerStore.getState().renderMode);
   const partialCleanup: Array<() => void | Promise<void>> = [() => viewer.dispose()];
   try {
     const sceneRuntime = viewer.getSceneRuntime();
-    let lastPayload: PreviewPayload | null = null;
     let flushSavedAnnotation = (): void => undefined;
     let attachSelection = (_id: string): void => undefined;
 
@@ -116,10 +118,9 @@ async function startViewerGeneration(
     partialCleanup.push(() => marks.dispose());
     const removeMarksFrameHook = sceneRuntime.addAnimationFrameHook(() => marks.frame());
     partialCleanup.push(removeMarksFrameHook);
-    const publishedRuntime: ViewerRuntime = runtimeHost.publishRuntime({
-      viewer,
+    const publishedRuntime = runtimeHost.publishRuntime({
       scene: sceneRuntime,
-      marks,
+      setMarksImmersivePresenting: presenting => marks.setImmersivePresenting(presenting),
     });
     partialCleanup.push(() => runtimeHost.clearRuntime(publishedRuntime));
 
@@ -162,7 +163,7 @@ async function startViewerGeneration(
     });
     attachSelection = id => {
       void hostActions
-        .invokeAndWait('attach-location-selection', { annotationIds: [id] })
+        .invokeAndWait(LOCATION_SELECTION_ACTION_ID, { annotationIds: [id] })
         .then(status => {
           if (!mounted) {
             return;
@@ -190,7 +191,6 @@ async function startViewerGeneration(
     feedHandle = connectMeshFeed({
       resumeIdentity: stableResumeIdentity,
       onMesh: payload => {
-        lastPayload = payload;
         viewerStore.setProtocolError(null);
         viewerStore.setAnnotationSyncError(null);
         viewerStore.setStatus('connected');
@@ -236,15 +236,14 @@ async function startViewerGeneration(
     let demoTimer: number | undefined;
     if (import.meta.env.MODE === 'demo') {
       demoTimer = window.setTimeout(() => {
-        if (!mounted || lastPayload) {
+        if (!mounted || viewerStore.getState().payload) {
           return;
         }
         void import('@/demo-payload').then(({ buildDemoPayload }) => {
-          if (!mounted || lastPayload) {
+          if (!mounted || viewerStore.getState().payload) {
             return;
           }
           const demo = buildDemoPayload();
-          lastPayload = demo;
           viewerStore.setStatus('connected');
           viewerStore.setPayload(demo);
           viewer.setMesh(demo);
@@ -258,30 +257,8 @@ async function startViewerGeneration(
 
     viewerStore.setMarksRuntime({
       store: marks.store,
-      flyouts: marks.flyouts,
       commitOpenDraft(): void {
-        marks.flyouts.dismissAll();
-      },
-      getDraftBatch() {
-        return marks.store.getDraftBatch();
-      },
-      sealBatch(batchId): boolean {
-        return marks.store.sealBatch(batchId) !== undefined;
-      },
-      restoreBatch(batchId): boolean {
-        return marks.store.restoreBatch(batchId) !== undefined;
-      },
-      freezeBatch(batchId): void {
-        marks.store.freezeBatch(batchId);
-      },
-      cancelBatch(batchId): void {
-        marks.store.cancelBatch(batchId);
-      },
-      commitSelection(id): void {
-        marks.store.commitSelection(id);
-      },
-      removeSelection(id): void {
-        marks.store.removeSelection(id);
+        marks.commitOpenDraft();
       },
       flushAnnotations(): boolean {
         return uplink.flushNow();
@@ -308,77 +285,55 @@ async function startViewerGeneration(
       },
       // Exporters are dynamically imported on first use (~85 KB min).
       async export3mf(): Promise<void> {
-        if (!lastPayload) {
+        const payload = viewerStore.getState().payload;
+        if (!payload) {
           return;
         }
         const { export3mf } = await import('@/exporters/three-mf');
-        download(export3mf(lastPayload), filename(lastPayload, '3mf'));
+        download(export3mf(payload), filename(payload, '3mf'));
       },
       async exportStl(): Promise<void> {
         const mesh = sceneRuntime.getMesh();
-        if (!mesh) {
+        const payload = viewerStore.getState().payload;
+        if (!mesh || !payload) {
           return;
         }
         const { exportStl } = await import('@/exporters/stl');
-        download(exportStl(mesh), filename(lastPayload, 'stl'));
+        download(exportStl(mesh), filename(payload, 'stl'));
       },
     });
     partialCleanup.push(() => viewerStore.setViewerApi(null));
 
-    let disposePromise: Promise<void> | null = null;
-    return {
-      viewer,
-      dispose(): Promise<void> {
-        if (disposePromise) {
-          return disposePromise;
-        }
+    const dispose = createViewerGenerationDisposer({
+      stop(): void {
         mounted = false;
         viewer.stop();
-        const errors: unknown[] = [];
-        const attempt = (cleanup: () => void): void => {
-          try {
-            cleanup();
-          } catch (error) {
-            errors.push(error);
-          }
-        };
-
-        attempt(() => {
+      },
+      beforeContributions: [
+        () => {
           if (demoTimer !== undefined) {
             window.clearTimeout(demoTimer);
           }
-        });
-        attempt(() => viewerStore.setViewerApi(null));
-        attempt(() => viewerStore.setMarksRuntime(null));
-        attempt(() => viewerStore.setHostActionsClient(null));
-        attempt(() => feedHandle?.close());
-        attempt(() => uplink.dispose());
-        attempt(() => hostActions.dispose());
-        attempt(() => viewerStore.setPayload(null));
-        attempt(() => viewerStore.setMarkMode('orbit'));
-        attempt(() => viewerStore.setStatus('disconnected'));
-        attempt(() => viewerStore.setProtocolError(null));
-        attempt(() => viewerStore.setAnnotationSyncError(null));
-
-        disposePromise = (async () => {
-          try {
-            await runtimeHost.clearRuntime(publishedRuntime);
-          } catch (error) {
-            errors.push(error);
-          }
-          attempt(removeMarksFrameHook);
-          attempt(() => marks.dispose());
-          try {
-            await viewer.dispose();
-          } catch (error) {
-            errors.push(error);
-          }
-          if (errors.length > 0) {
-            throw new AggregateError(errors, 'Viewer generation cleanup failed.');
-          }
-        })();
-        return disposePromise;
-      },
+        },
+        () => viewerStore.setViewerApi(null),
+        () => viewerStore.setMarksRuntime(null),
+        () => viewerStore.setHostActionsClient(null),
+        () => feedHandle?.close(),
+        () => uplink.dispose(),
+        () => hostActions.dispose(),
+        () => viewerStore.setPayload(null),
+        () => viewerStore.setMarkMode('orbit'),
+        () => viewerStore.setModelVersion('unknown'),
+        () => viewerStore.setStatus('disconnected'),
+        () => viewerStore.setProtocolError(null),
+        () => viewerStore.setAnnotationSyncError(null),
+      ],
+      disposeContributions: () => runtimeHost.clearRuntime(publishedRuntime),
+      afterContributions: [removeMarksFrameHook, () => marks.dispose(), () => viewer.dispose()],
+    });
+    return {
+      viewer,
+      dispose,
     };
   } catch (error) {
     viewer.stop();
@@ -394,9 +349,9 @@ async function startViewerGeneration(
   }
 }
 
-function filename(payload: PreviewPayload | null, ext: string): string {
+function filename(payload: ViewerModel, ext: string): string {
   const slug =
-    (payload?.description || 'model')
+    (payload.description || 'model')
       .toLowerCase()
       .replace(/[^a-z0-9]+/g, '-')
       .replace(/^-+|-+$/g, '')
