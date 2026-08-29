@@ -2,10 +2,10 @@ import { inflateSync } from 'node:zlib';
 
 import { describe, expect, it } from 'vitest';
 
-import { createRenderer } from '../src/server/preview/renderer.js';
-import type { CaptureView } from '../src/server/preview/renderer.js';
-import type { MeshPayload } from '../src/server/runner/protocol.js';
-import type { WireAnnotation } from '../src/shared/wire/annotations.js';
+import { createRenderer } from '../packages/modeling/src/preview/renderer.js';
+import type { CaptureView } from '../packages/modeling/src/preview/renderer.js';
+import type { ModelArtifact } from '../packages/modeling/src/runner/protocol.js';
+import type { WireAnnotation } from '../packages/protocol/src/wire/annotations.js';
 
 const PNG_SIGNATURE = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
 const CAPTURE_VIEWS: CaptureView[] = ['iso', 'front', 'back', 'left', 'right', 'top', 'bottom'];
@@ -17,7 +17,7 @@ interface DecodedPng {
   chunks: string[];
 }
 
-function cubeMesh(): MeshPayload {
+function cubeMesh(): ModelArtifact {
   const positions = new Float32Array([
     -5, -5, -5, 5, -5, -5, 5, 5, -5, -5, 5, -5, -5, -5, 5, 5, -5, 5, 5, 5, 5, -5, 5, 5,
   ]);
@@ -97,8 +97,8 @@ function decodeRendererPng(png: Buffer): DecodedPng {
 
 function uniqueColorCount(pixels: Buffer): number {
   const colors = new Set<number>();
-  for (let i = 0; i < pixels.length; i += 4) {
-    colors.add((pixels[i] << 24) | (pixels[i + 1] << 16) | (pixels[i + 2] << 8) | pixels[i + 3]);
+  for (let i = 0; i + 3 < pixels.length; i += 4) {
+    colors.add(pixels.readUInt32BE(i));
     if (colors.size > 1) {
       return colors.size;
     }

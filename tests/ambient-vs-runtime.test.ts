@@ -2,7 +2,7 @@
  * Drift test for the sandbox ambient TypeScript declarations.
  *
  * The sandbox publishes a curated `.d.ts` (sourced from
- * `src/server/sandbox/ambient-types.ts`) that promises a specific subset of
+ * `packages/modeling/src/sandbox/ambient-types.ts`) that promises a specific subset of
  * the manifold-3d API to user snippets. If the runtime drops or renames a
  * method we declared, snippets that typecheck cleanly will explode at
  * runtime — exactly the situation this test is designed to catch.
@@ -22,7 +22,7 @@ import Module from 'manifold-3d';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, '..');
-const ambientSourcePath = resolve(repoRoot, 'src/server/sandbox/ambient-types.ts');
+const ambientSourcePath = resolve(repoRoot, 'packages/modeling/src/sandbox/ambient-types.ts');
 
 interface DeclaredApi {
   classes: Map<string, ClassMembers>;

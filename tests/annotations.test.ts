@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
-import { isAnnotationsMessage } from '../src/server/annotations/annotations.js';
+import {
+  ANNOTATIONS_PROTOCOL_VERSION,
+  createAnnotationsMessage,
+  isAnnotationsMessage,
+} from '../packages/protocol/src/wire/annotations.js';
 
 describe('isAnnotationsMessage', () => {
   it('returns true for a valid empty annotations message', () => {
@@ -30,6 +34,31 @@ describe('isAnnotationsMessage', () => {
         ],
       }),
     ).toBe(true);
+  });
+
+  it('accepts the immediate legacy shape and validates the revisioned current shape', () => {
+    expect(
+      isAnnotationsMessage({
+        kind: 'annotations',
+        modelVersion: 'legacy-v1',
+        items: [],
+      }),
+    ).toBe(true);
+    expect(createAnnotationsMessage('v2', 4, [])).toEqual({
+      kind: 'annotations',
+      protocolVersion: ANNOTATIONS_PROTOCOL_VERSION,
+      revision: 4,
+      modelVersion: 'v2',
+      items: [],
+    });
+    expect(
+      isAnnotationsMessage({
+        kind: 'annotations',
+        protocolVersion: ANNOTATIONS_PROTOCOL_VERSION,
+        modelVersion: 'v2',
+        items: [],
+      }),
+    ).toBe(false);
   });
 
   it('returns false for null', () => {

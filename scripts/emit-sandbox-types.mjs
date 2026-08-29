@@ -3,7 +3,8 @@
  * Emit the canonical sandbox ambient `.d.ts` to consumers.
  *
  * The single source of truth for the sandbox ambient type declarations
- * is the template literal exported from `src/server/sandbox/ambient-types.ts`
+ * is the template literal exported from
+ * `packages/modeling/src/sandbox/ambient-types.ts`
  * (variable `sandboxAmbientDeclarations`). At runtime the TypeScript compiler
  * stage injects that string into a virtual `.d.ts` file. This script extracts
  * the same string and writes it to:
@@ -26,7 +27,7 @@ import process from 'node:process';
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, '..');
 
-const SOURCE = resolve(repoRoot, 'src/server/sandbox/ambient-types.ts');
+const SOURCE = resolve(repoRoot, 'packages/modeling/src/sandbox/ambient-types.ts');
 const TARGETS = [
   resolve(repoRoot, 'samples/manifold-sandbox.d.ts'),
   resolve(repoRoot, 'plugin/skills/use-manifold/references/manifold-sandbox.d.ts'),
@@ -35,7 +36,7 @@ const TARGETS = [
 const HEADER = `// =============================================================================
 // AUTO-GENERATED — DO NOT EDIT
 //
-// Generated from: src/server/sandbox/ambient-types.ts
+// Generated from: packages/modeling/src/sandbox/ambient-types.ts
 // Regenerate via: npm run build:sandbox-types  (or npm run build)
 //
 // This file is the canonical ambient declaration for the sandbox. The

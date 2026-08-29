@@ -1,7 +1,7 @@
 // =============================================================================
 // AUTO-GENERATED — DO NOT EDIT
 //
-// Generated from: src/server/sandbox/ambient-types.ts
+// Generated from: packages/modeling/src/sandbox/ambient-types.ts
 // Regenerate via: npm run build:sandbox-types  (or npm run build)
 //
 // This file is the canonical ambient declaration for the sandbox. The

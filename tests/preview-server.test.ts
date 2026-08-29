@@ -4,31 +4,44 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { WebSocket } from 'ws';
 
-import type { MeshPayload } from '../src/server/runner/protocol.js';
-import type * as PreviewModuleNs from '../src/server/preview/preview-server.js';
+import {
+  VIEWER_PROTOCOL_VERSION,
+  decodeViewerModel,
+  parseModelHeader,
+  type ModelHeader,
+  type ViewerModelFrame,
+} from '../packages/protocol/src/wire/model.js';
+import type * as PreviewModuleNs from '../packages/viewer-host/src/preview/preview-server.js';
 
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..');
-const distPreview = join(repoRoot, 'dist', 'server', 'preview', 'preview-server.js');
-const distPublic = join(repoRoot, 'dist', 'public', 'index.html');
+const distPreview = join(repoRoot, 'packages', 'viewer-host', 'dist', 'preview', 'preview-server.js');
+const distPublic = join(repoRoot, 'packages', 'viewer-host', 'dist', 'public', 'index.html');
 
 const skipUnlessBuilt = !existsSync(distPreview) || !existsSync(distPublic);
 
 // Import the COMPILED preview-server (not the TS source). PUBLIC_DIR is
 // computed relative to the file's own location at import-time; under
-// vitest with esbuild, the TS source path is src/server/preview/ which
+// vitest with esbuild, the TS source path is packages/viewer-host/src/preview/ which
 // has no sibling public/ dir. Pointing at dist keeps PUBLIC_DIR aligned
-// with dist/public/ where vite emits the viewer bundle.
+// with viewer-host/dist/public/ where Vite emits the viewer bundle.
 type PreviewModule = typeof PreviewModuleNs;
 let previewModule: PreviewModule;
 let handle: PreviewModule extends { startPreviewServer: (...args: never[]) => Promise<infer H> } ? H : never;
 
-function syntheticMesh(): MeshPayload {
+function syntheticModel(): ViewerModelFrame {
   return {
-    description: 'getLastMesh test',
+    description: 'getLastModel test',
     numProp: 3,
     triangles: 1,
     vertices: 3,
-    features: [],
+    features: [
+      {
+        label: 'unknown#1',
+        kind: 'unknown',
+        params: {},
+        transform: [1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0],
+      },
+    ],
     vertProperties: new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0]).buffer,
     triVerts: new Uint32Array([0, 1, 2]).buffer,
     triFeatureIds: new Uint32Array([0]).buffer,
@@ -74,16 +87,78 @@ describe.skipIf(skipUnlessBuilt)('preview server', () => {
     expect(res.status).toBe(404);
   });
 
-  it('exposes the cached mesh only after push()', async () => {
+  it('exposes the cached viewer model only after pushModel()', async () => {
     const localHandle = await previewModule.startPreviewServer(47671);
     try {
-      expect(localHandle.getLastMesh()).toBeUndefined();
+      expect(localHandle.getLastModel()).toBeUndefined();
 
-      const mesh = syntheticMesh();
-      localHandle.push(mesh);
+      const model = syntheticModel();
+      localHandle.pushModel(model);
 
-      expect(localHandle.getLastMesh()).toBe(mesh);
+      expect(localHandle.getLastModel()).toBe(model);
     } finally {
+      await localHandle.close();
+    }
+  });
+
+  it('sends a versioned header and binary frames that decode as the pushed model', async () => {
+    const localHandle = await previewModule.startPreviewServer(47771);
+    const wsUrl = `${localHandle.url.replace(/^http/, 'ws')}ws`;
+    const origin = new URL(localHandle.url).origin;
+    const host = new URL(localHandle.url).host;
+    const ws = new WebSocket(wsUrl, { headers: { Origin: origin, Host: host } });
+    const frame = syntheticModel();
+
+    try {
+      const decoded = new Promise<{ header: ModelHeader; model: ReturnType<typeof decodeViewerModel> }>(
+        (resolve, reject) => {
+          let header: ModelHeader | undefined;
+          const buffers: ArrayBuffer[] = [];
+          ws.on('message', (raw, isBinary) => {
+            try {
+              if (!isBinary) {
+                const parsed = JSON.parse(raw.toString()) as { kind?: unknown };
+                if (parsed.kind === 'mesh') {
+                  header = parseModelHeader(parsed, { allowLegacy: false });
+                }
+                return;
+              }
+              if (!header) {
+                return;
+              }
+              buffers.push(Uint8Array.from(raw as Buffer).buffer);
+              if (buffers.length === 3) {
+                resolve({
+                  header,
+                  model: decodeViewerModel(header, {
+                    vertProperties: buffers[0]!,
+                    triVerts: buffers[1]!,
+                    triFeatureIds: buffers[2]!,
+                  }),
+                });
+              }
+            } catch (error) {
+              reject(error);
+            }
+          });
+          ws.once('error', reject);
+        },
+      );
+
+      await new Promise<void>((resolve, reject) => {
+        ws.once('open', resolve);
+        ws.once('error', reject);
+      });
+      localHandle.pushModel(frame);
+
+      const { header, model } = await decoded;
+      expect(model.description).toBe(frame.description);
+      expect(model.triangles).toBe(frame.triangles);
+      expect([...model.triVerts]).toEqual([0, 1, 2]);
+      expect(localHandle.getLastModel()).toBe(frame);
+      expect(header.protocolVersion).toBe(VIEWER_PROTOCOL_VERSION);
+    } finally {
+      ws.terminate();
       await localHandle.close();
     }
   });

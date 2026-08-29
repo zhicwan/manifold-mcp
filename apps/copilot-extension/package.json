@@ -1,0 +1,35 @@
+{
+  "name": "@manifold3d/copilot-extension",
+  "version": "0.0.0-private",
+  "private": true,
+  "type": "module",
+  "main": "dist/extension.mjs",
+  "files": [
+    "dist/extension.mjs"
+  ],
+  "scripts": {
+    "clean": "node scripts/clean.mjs",
+    "build:viewer": "npm run build:extension --workspace @manifold3d/viewer",
+    "build": "npm run clean && tsc -b ../../packages/protocol ../../packages/modeling ../../packages/viewer-host && npm run build:viewer && node scripts/build.mjs",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "node ../../scripts/run-vitest.mjs --dir apps/copilot-extension/test",
+    "verify": "node scripts/verify.mjs",
+    "install:local": "node scripts/install-local.mjs"
+  },
+  "dependencies": {
+    "@manifold3d/modeling": "0.0.0-private",
+    "@manifold3d/protocol": "0.0.0-private",
+    "@manifold3d/viewer-host": "0.0.0-private"
+  },
+  "devDependencies": {
+    "@github/copilot-sdk": "1.0.11",
+    "@types/node": "^26.0.1",
+    "@types/ws": "^8.18.1",
+    "rolldown": "1.2.4",
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.8"
+  },
+  "engines": {
+    "node": ">=24"
+  }
+}

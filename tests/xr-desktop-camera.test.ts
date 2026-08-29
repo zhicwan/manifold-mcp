@@ -5,7 +5,7 @@ import {
   captureDesktopCamera,
   restoreDesktopCamera,
   updateDesktopCameraFrame,
-} from '../src/viewer/src/xr/desktop-camera.js';
+} from '../packages/viewer/src/xr/desktop-camera.js';
 
 describe('XR desktop camera preservation', () => {
   it('restores the complete perspective camera and orbit target after XR mutation', () => {

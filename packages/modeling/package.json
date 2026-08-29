@@ -1,0 +1,30 @@
+{
+  "name": "@manifold3d/modeling",
+  "version": "0.0.0-private",
+  "private": true,
+  "type": "module",
+  "files": [
+    "dist"
+  ],
+  "exports": {
+    "./*.js": {
+      "types": "./dist/*.d.ts",
+      "default": "./dist/*.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -b"
+  },
+  "dependencies": {
+    "@manifold3d/protocol": "0.0.0-private",
+    "manifold-3d": "^3.5.1",
+    "source-map": "^0.8.0",
+    "three": "^0.185.0",
+    "typescript": "^6.0.3",
+    "yaml": "^2.9.0"
+  },
+  "devDependencies": {
+    "@types/node": "^26.0.1",
+    "@types/three": "^0.185.0"
+  }
+}

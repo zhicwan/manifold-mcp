@@ -1,10 +1,10 @@
 #!/usr/bin/env node
 
 /**
- * Propagate the `package.json` version to every other manifest that must move
- * in lockstep, and to the `@x.y.x` range in `plugin/.mcp.json`. Run as the npm
- * `version` lifecycle script so a `npm version <bump>` keeps everything in sync
- * automatically (the edits are folded into the version commit via `git add`).
+ * Propagate the public workspace package version to every other manifest that
+ * must move in lockstep, and to the `@x.y.x` range in `plugin/.mcp.json`. Run
+ * as that workspace's npm `version` lifecycle script so an `npm version <bump>
+ * --workspace @zhicwan/manifold3d-mcp` keeps everything in sync.
  *
  * Uses targeted, format-preserving string replacement (not full JSON
  * re-serialization) so it does not reflow unrelated formatting. `check-sync.mjs`
@@ -17,6 +17,7 @@ import process from 'node:process';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, '..');
+const publicPackagePath = 'packages/manifold3d-mcp/package.json';
 const packageName = '@zhicwan/manifold3d-mcp';
 
 function read(relativePath) {
@@ -27,10 +28,10 @@ function write(relativePath, contents) {
   writeFileSync(resolve(repoRoot, relativePath), contents);
 }
 
-const version = JSON.parse(read('package.json')).version;
+const version = JSON.parse(read(publicPackagePath)).version;
 const semver = /^(\d+)\.(\d+)\.(\d+)(?:[-+].*)?$/.exec(version);
 if (!semver) {
-  process.stderr.write(`sync-versions: invalid package.json version "${version}"\n`);
+  process.stderr.write(`sync-versions: invalid ${publicPackagePath} version "${version}"\n`);
   process.exit(1);
 }
 const [, major, minor] = semver;

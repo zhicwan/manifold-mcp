@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { GrabStateMachine } from '../src/viewer/src/xr/grab-state.js';
+import { GrabStateMachine } from '../packages/viewer/src/xr/grab-state.js';
 
 describe('XR grab state', () => {
   it('allows one controller owner at a time', () => {

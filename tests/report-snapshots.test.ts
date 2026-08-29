@@ -18,7 +18,15 @@ import {
   buildCodeFrame,
   emptyReport,
   reportToYaml,
-} from '../src/server/validation/report.js';
+} from '../packages/modeling/src/validation/report.js';
+
+function requiredCodeFrame(code: string, line: number, col: number, endLine?: number, endCol?: number): string {
+  const frame = buildCodeFrame(code, line, col, endLine, endCol);
+  if (frame === undefined) {
+    throw new Error('Expected a code frame for a valid source location.');
+  }
+  return frame;
+}
 
 describe('reportToYaml — per-stage snapshots (VAL-8)', () => {
   it('ok: true empty-issue report', () => {
@@ -45,7 +53,7 @@ describe('reportToYaml — per-stage snapshots (VAL-8)', () => {
       col: 1,
       endLine: 1,
       endCol: 8,
-      snippet: buildCodeFrame(code, 1, 1, 1, 8),
+      snippet: requiredCodeFrame(code, 1, 1, 1, 8),
     });
     expect(reportToYaml(r)).toMatchSnapshot();
   });
@@ -61,7 +69,7 @@ describe('reportToYaml — per-stage snapshots (VAL-8)', () => {
         "Property 'box' does not exist on type 'typeof Manifold'.\nhint: Check the skill API reference for the supported method name or equivalent modeling recipe.",
       line: 1,
       col: 19,
-      snippet: buildCodeFrame(code, 1, 19),
+      snippet: requiredCodeFrame(code, 1, 19),
     });
     expect(reportToYaml(r)).toMatchSnapshot();
   });

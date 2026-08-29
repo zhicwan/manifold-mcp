@@ -1,10 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { AnnotationStore } from '../../src/viewer/src/marks/annotation-store.js';
+import { AnnotationStore } from '../../packages/viewer/src/marks/annotation-store.js';
 import {
   FlyoutController,
   type FlyoutControllerViewBridge,
-} from '../../src/viewer/src/marks/flyout/flyout-controller.js';
+} from '../../packages/viewer/src/marks/flyout/flyout-controller.js';
 
 function makeBridge(): {
   bridge: FlyoutControllerViewBridge;
@@ -70,6 +70,20 @@ describe('FlyoutController', () => {
     expect(store.get(id)?.note).toBe('final note');
     expect(controller.getDraft(id)).toBeUndefined();
     expect(controller.getExpandedId()).toBeNull();
+  });
+
+  it('notifies the host bridge immediately after a changed draft is saved', () => {
+    const onCommit = vi.fn();
+    const notifyingController = new FlyoutController(store, bridge.bridge, onCommit);
+    const id = seed(store);
+    notifyingController.open(id);
+    notifyingController.setDraft(id, 'send this to the host');
+    notifyingController.commit(id);
+
+    expect(onCommit).toHaveBeenCalledOnce();
+    notifyingController.open(id);
+    notifyingController.commit(id);
+    expect(onCommit).toHaveBeenCalledOnce();
   });
 
   it('commit() with an empty draft on a never-saved annotation removes it', () => {

@@ -18,8 +18,9 @@ npm ci
 ## Local plugin development
 
 Plugin files live under `plugin/`. The repo-root `.mcp.json` points the
-`manifold3d-mcp` MCP server at your local `dist/server/index.js`, so after
-building your changes are picked up automatically:
+`manifold3d-mcp` MCP server at your local
+`packages/manifold3d-mcp/dist/server/index.js`, so after building your changes
+are picked up automatically:
 
 ```bash
 npm run build
@@ -27,10 +28,10 @@ npm run build
 
 The repo ships two `.mcp.json` files with the same server name (`manifold3d-mcp`):
 
-| File               | Command                                | Purpose                                 |
-| ------------------ | -------------------------------------- | --------------------------------------- |
-| `.mcp.json` (root) | `node dist/server/index.js`            | Local development against your build    |
-| `plugin/.mcp.json` | `npx -y @zhicwan/manifold3d-mcp@1.0.x` | Published package for end-user installs |
+| File               | Command                                             | Purpose                                 |
+| ------------------ | --------------------------------------------------- | --------------------------------------- |
+| `.mcp.json` (root) | `node packages/manifold3d-mcp/dist/server/index.js` | Local development against your build    |
+| `plugin/.mcp.json` | `npx -y @zhicwan/manifold3d-mcp@1.0.x`              | Published package for end-user installs |
 
 When working from the repo root the local config takes precedence, so your
 changes are picked up automatically after `npm run build`.
@@ -46,14 +47,20 @@ repo checkout:
 claude --plugin-dir /path/to/manifold3d-mcp/plugin
 ```
 
-> **Note:** `dist/` is git-ignored. You must run `npm run build` at least once
-> before the root `.mcp.json` can start the local MCP server.
+> **Note:** workspace `dist/` directories are git-ignored. You must run
+> `npm run build` at least once before the root `.mcp.json` can start the local
+> MCP server.
 
 ## Scripts
 
 | Command                          | Description                                          |
 | -------------------------------- | ---------------------------------------------------- |
 | `npm run build`                  | Full build (viewer + server + sandbox types)         |
+| `npm run build:extension`        | Build the single-file Copilot CLI Extension          |
+| `npm run test:extension`         | Run Extension composition and attachment tests       |
+| `npm run verify:extension`       | Build, test, inspect, and self-test the Extension    |
+| `npm run extension:install`      | Build and copy the Extension into local discovery    |
+| `npm run verify:viewer-flat`     | Build and verify the optional-XR Viewer boundary     |
 | `npm run plugin:build`           | Alias for the full build before local plugin testing |
 | `npm run plugin:copilot:install` | Build, then install `./plugin` into Copilot CLI      |
 | `npm run typecheck`              | TypeScript type checking (all projects)              |
@@ -61,10 +68,20 @@ claude --plugin-dir /path/to/manifold3d-mcp/plugin
 | `npm run lint:fix`               | ESLint with auto-fix                                 |
 | `npm run format`                 | Prettier formatting                                  |
 | `npm run format:check`           | Prettier check (CI)                                  |
-| `npm test`                       | Unit + smoke tests                                   |
-| `npm run test:unit`              | Unit tests only                                      |
+| `npm test`                       | Build, then run the full unit + smoke suite          |
+| `npm run test:unit`              | Build, then run all non-smoke tests                  |
 | `npm run test:smoke`             | Smoke tests (builds first)                           |
-| `npm run test:watch`             | Unit tests in watch mode                             |
+| `npm run test:watch`             | Build, then run non-smoke tests in watch mode        |
+
+The default Viewer entry explicitly composes `@manifold3d/viewer/xr`. The
+`@manifold3d/viewer/flat` subpath and flat Vite entry use the same Viewer shell
+without importing or enabling the optional immersive implementation.
+
+The private `apps/copilot-extension` workspace produces one self-contained
+Copilot CLI discovery file and is intentionally excluded from the public MCP
+tarball. Its Canvas API and extension-only framing exception are experimental;
+review the security and manual host verification notes in
+`apps/copilot-extension/README.md` before changing that composition.
 
 ## Adding a sample
 
@@ -90,15 +107,17 @@ This updates `samples/manifold-sandbox.d.ts` and
 2. Make your changes and ensure all checks pass:
 
    ```bash
-   npm run build && npm run typecheck && npm run lint && npm test
+   npm run format:check && npm run lint && npm run typecheck && npm test
    ```
 
 3. Open a pull request. Squash merge only; all CI checks must pass.
 
 ## Releasing / Publishing
 
-The npm package, plugin manifests, and `plugin/.mcp.json` range move in
-lockstep. Use this semver convention:
+The public workspace package (`packages/manifold3d-mcp/package.json`), plugin
+manifests, and `plugin/.mcp.json` range move in lockstep. Private internal
+workspaces stay at `0.0.0-private` and are never published. Use this semver
+convention:
 
 - Patch: bug fixes only, with no MCP tool additions or behavior changes. The
   plugin launches `@zhicwan/manifold3d-mcp@1.0.x`, so compatible patch releases
@@ -111,13 +130,14 @@ lockstep. Use this semver convention:
 Release steps (works with `main` branch protection):
 
 1. Create a release branch and bump the version **without** tagging. The npm
-   `version` lifecycle script (`scripts/sync-versions.mjs`) propagates the new
-   version to every plugin/marketplace manifest and repins the
-   `plugin/.mcp.json` `@x.y.x` range, staging them:
+   public workspace's `version` lifecycle script
+   (`scripts/sync-versions.mjs`) propagates the new version to every
+   plugin/marketplace manifest and repins the `plugin/.mcp.json` `@x.y.x`
+   range, staging them:
 
    ```bash
    git checkout -b release/v1.0.1
-   npm version patch --no-git-tag-version   # or minor/major
+   npm version patch --workspace @zhicwan/manifold3d-mcp --no-git-tag-version
    git commit -am "release: v1.0.1"
    git push -u origin release/v1.0.1
    ```
@@ -134,9 +154,10 @@ Release steps (works with `main` branch protection):
    git push origin v1.0.1
    ```
 
-`.github/workflows/cd.yml` then verifies the tag matches `package.json`, runs
-`check:sync`, and publishes through npm OIDC Trusted Publishing (provenance is
-generated automatically; no token is used).
+`.github/workflows/cd.yml` then verifies the tag matches
+`packages/manifold3d-mcp/package.json`, runs `check:sync`, and publishes that
+workspace through npm OIDC Trusted Publishing (provenance is generated
+automatically; no token is used).
 
 > Do not `git push --follow-tags` straight to `main` — branch protection
 > rejects the direct push, which can leave the tag pushed without the version
@@ -148,7 +169,7 @@ npm cannot register a Trusted Publisher for a package that does not exist yet,
 so the **first** publish must be done manually by a maintainer:
 
 ```bash
-npm publish   # from a clean checkout; runs prepublishOnly + prepack
+npm publish --workspace @zhicwan/manifold3d-mcp
 ```
 
 Then register this repository and the `cd.yml` workflow as a Trusted Publisher

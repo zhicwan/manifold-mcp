@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import * as THREE from 'three';
 
-import { AnnotationStore } from '../../src/viewer/src/marks/annotation-store.js';
-import { updatePositions } from '../../src/viewer/src/marks/flyout/flyout-projection.js';
+import { AnnotationStore } from '../../packages/viewer/src/marks/annotation-store.js';
+import { updatePositions } from '../../packages/viewer/src/marks/flyout/flyout-projection.js';
 
 interface FakeStyle {
   display: string;

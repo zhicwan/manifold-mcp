@@ -15,6 +15,9 @@ export default tseslint.config(
             'vitest.config.ts',
             'scripts/*.mjs',
             'scripts/*.ts',
+            'scripts/extension-spike/*.mjs',
+            'apps/copilot-extension/scripts/*.mjs',
+            'packages/viewer/scripts/*.mjs',
             'plugin/bin/*.mjs',
           ],
           // Safety net: in some IDE contexts projectService may briefly
@@ -49,6 +52,24 @@ export default tseslint.config(
     },
   },
   {
+    files: ['packages/viewer/src/**/*.{ts,tsx}'],
+    ignores: ['packages/viewer/src/xr/**', 'packages/viewer/src/main.tsx'],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          patterns: [
+            {
+              group: ['@/xr', '@/xr/**', '**/xr', '**/xr/**'],
+              message:
+                'Base Viewer modules cannot import XR. Compose @manifold3d/viewer/xr only from the default entry.',
+            },
+          ],
+        },
+      ],
+    },
+  },
+  {
     files: ['samples/**/*.{js,ts}'],
     languageOptions: {
       parserOptions: {
@@ -75,8 +96,12 @@ export default tseslint.config(
   {
     ignores: [
       'build/',
-      'dist/',
+      '**/dist/',
       'node_modules/',
+      '.pack-smoke/',
+      '.test-tmp/',
+      'apps/copilot-extension/.verify-empty/',
+      'apps/copilot-extension/.test-workspace/',
       'plugin/skills/use-manifold/references/manifold-sandbox.d.ts',
       '.github/skills/forge-workspace/',
       'plugin/skills/use-manifold/evals/',

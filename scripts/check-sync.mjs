@@ -7,6 +7,7 @@ import process from 'node:process';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, '..');
+const publicPackagePath = 'packages/manifold3d-mcp/package.json';
 const packageName = '@zhicwan/manifold3d-mcp';
 const failures = [];
 
@@ -49,7 +50,7 @@ function versionMajorMinor(version) {
 }
 
 function checkVersions() {
-  const packageJson = readJson('package.json');
+  const packageJson = readJson(publicPackagePath);
   const pluginJson = readJson('plugin/plugin.json');
   const claudePluginJson = readJson('plugin/.claude-plugin/plugin.json');
   const marketplaceJson = readJson('.claude-plugin/marketplace.json');
@@ -68,7 +69,7 @@ function checkVersions() {
 
   const expectedVersion = packageJson.version;
   const versions = [
-    ['package.json', packageJson.version],
+    [publicPackagePath, packageJson.version],
     ['plugin/plugin.json', pluginJson.version],
     ['plugin/.claude-plugin/plugin.json', claudePluginJson.version],
     ['.claude-plugin/marketplace.json plugins[name=manifold]', marketplacePlugin.version],
@@ -77,7 +78,7 @@ function checkVersions() {
   if (mismatches.length > 0) {
     addFailure(
       [
-        'Package/plugin versions must match package.json:',
+        `Package/plugin versions must match ${publicPackagePath}:`,
         ...versions.map(([label, version]) => `  - ${label}: ${version}`),
       ].join('\n'),
     );
@@ -106,7 +107,7 @@ function checkVersions() {
   const rangeMajorMinor = `${rangeMatch[1]}.${rangeMatch[2]}`;
   if (packageMajorMinor && rangeMajorMinor !== packageMajorMinor) {
     addFailure(
-      `plugin/.mcp.json package range ${packageArg} must share package.json major.minor ${packageMajorMinor}.`,
+      `plugin/.mcp.json package range ${packageArg} must share ${publicPackagePath} major.minor ${packageMajorMinor}.`,
     );
   }
 }
@@ -176,18 +177,19 @@ function findMatchingBracket(source, openIndex) {
 }
 
 function readServerToolNames() {
-  const source = readText('src/server/mcp/mcp-server.ts');
+  const sourcePath = 'packages/manifold3d-mcp/src/server/mcp/mcp-server.ts';
+  const source = readText(sourcePath);
   const toolsMarker = 'tools:';
   const toolsIndex = source.indexOf(toolsMarker);
   const openBracket = source.indexOf('[', toolsIndex);
   if (toolsIndex < 0 || openBracket < 0) {
-    addFailure('Could not find the MCP tools array in src/server/mcp/mcp-server.ts.');
+    addFailure(`Could not find the MCP tools array in ${sourcePath}.`);
     return [];
   }
 
   const closeBracket = findMatchingBracket(source, openBracket);
   if (closeBracket < 0) {
-    addFailure('Could not find the end of the MCP tools array in src/server/mcp/mcp-server.ts.');
+    addFailure(`Could not find the end of the MCP tools array in ${sourcePath}.`);
     return [];
   }
 

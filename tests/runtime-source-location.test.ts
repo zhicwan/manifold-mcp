@@ -3,7 +3,7 @@ import { existsSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
-import type * as HostModuleNs from '../src/server/runner/host.js';
+import type * as HostModuleNs from '../packages/modeling/src/runner/host.js';
 
 // RUN-6 regression: a runtime null-deref on user line N must surface as
 // `Issue.line === N` in the report. Before the sourcemap-based location
@@ -12,8 +12,8 @@ import type * as HostModuleNs from '../src/server/runner/host.js';
 // drifted on every Node minor that touched stack-trace formatting and
 // returned the wrong line for any non-trivial snippet.
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..');
-const distHost = join(repoRoot, 'dist', 'server', 'runner', 'host.js');
-const workerJs = join(repoRoot, 'dist', 'server', 'runner', 'worker.js');
+const distHost = join(repoRoot, 'packages', 'modeling', 'dist', 'runner', 'host.js');
+const workerJs = join(repoRoot, 'packages', 'modeling', 'dist', 'runner', 'worker.js');
 
 const skipUnlessBuilt = !existsSync(workerJs) || !existsSync(distHost) || process.env.SKIP_RUNNER_TESTS === '1';
 

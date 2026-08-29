@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
-import { computeDesktopCameraClipping, XR_CAMERA_CLIPPING } from '../src/viewer/src/scene/camera-clipping.js';
+import { computeDesktopCameraClipping } from '../packages/viewer/src/scene/camera-clipping.js';
+import { XR_CAMERA_CLIPPING } from '../packages/viewer/src/xr/camera-clipping.js';
 
 describe('camera clipping policies', () => {
   it('keeps XR clipping in metres regardless of model dimensions', () => {

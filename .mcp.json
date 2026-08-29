@@ -3,7 +3,7 @@
     "manifold3d-mcp": {
       "type": "local",
       "command": "node",
-      "args": ["dist/server/index.js"],
+      "args": ["packages/manifold3d-mcp/dist/server/index.js"],
       "tools": ["*"]
     }
   }

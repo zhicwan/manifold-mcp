@@ -15,13 +15,13 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { WebSocket } from 'ws';
 
-import type { MeshPayload } from '../src/server/runner/protocol.js';
+import type { ViewerModelFrame } from '../packages/protocol/src/wire/model.js';
 
-import type * as PreviewModuleNs from '../src/server/preview/preview-server.js';
+import type * as PreviewModuleNs from '../packages/viewer-host/src/preview/preview-server.js';
 
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..');
-const distPreview = join(repoRoot, 'dist', 'server', 'preview', 'preview-server.js');
-const distPublic = join(repoRoot, 'dist', 'public', 'index.html');
+const distPreview = join(repoRoot, 'packages', 'viewer-host', 'dist', 'preview', 'preview-server.js');
+const distPublic = join(repoRoot, 'packages', 'viewer-host', 'dist', 'public', 'index.html');
 const skipUnlessBuilt = !existsSync(distPreview) || !existsSync(distPublic);
 
 type PreviewModule = typeof PreviewModuleNs;
@@ -44,7 +44,11 @@ function openTabAndAwaitVersion(url: string): Promise<{ ws: WebSocket; modelVers
   return new Promise((resolve, reject) => {
     const tryResolve = (): void => {
       if (resolvedModelVersion !== undefined) {
-        resolve({ ws, modelVersion: resolvedModelVersion, clientId: resolvedClientId });
+        resolve({
+          ws,
+          modelVersion: resolvedModelVersion,
+          ...(resolvedClientId !== undefined ? { clientId: resolvedClientId } : {}),
+        });
       }
     };
     // Attach the message handler synchronously, BEFORE awaiting open, so
@@ -89,7 +93,7 @@ async function closeWs(ws: WebSocket): Promise<void> {
   });
 }
 
-function syntheticMesh(): MeshPayload {
+function syntheticModel(): ViewerModelFrame {
   // Bare-minimum well-formed payload so the server will accept push() and
   // emit a fresh modelVersion. Geometry doesn't need to be physically
   // meaningful — the server just shuttles bytes to clients. The runner
@@ -100,7 +104,14 @@ function syntheticMesh(): MeshPayload {
     numProp: 3,
     triangles: 1,
     vertices: 3,
-    features: [],
+    features: [
+      {
+        label: 'unknown#1',
+        kind: 'unknown',
+        params: {},
+        transform: [1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0],
+      },
+    ],
     vertProperties: new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0]).buffer,
     triVerts: new Uint32Array([0, 1, 2]).buffer,
     triFeatureIds: new Uint32Array([0]).buffer,
@@ -127,7 +138,7 @@ describe.skipIf(skipUnlessBuilt)('preview server: multi-tab annotation merge', (
   it('returns the union of annotations from two simultaneously-open tabs', async () => {
     // Push a mesh first so modelVersion advances away from 'none' — the
     // server only accepts annotations matching the current modelVersion.
-    handle.push(syntheticMesh());
+    handle.pushModel(syntheticModel());
 
     const a = await openTabAndAwaitVersion(handle.url);
     const b = await openTabAndAwaitVersion(handle.url);
@@ -200,7 +211,7 @@ describe.skipIf(skipUnlessBuilt)('preview server: multi-tab annotation merge', (
   }, 15_000);
 
   it("clears all clients' annotations when a new model is pushed", async () => {
-    handle.push(syntheticMesh());
+    handle.pushModel(syntheticModel());
 
     const a = await openTabAndAwaitVersion(handle.url);
     const tabA = a.ws;
@@ -225,7 +236,7 @@ describe.skipIf(skipUnlessBuilt)('preview server: multi-tab annotation merge', (
       expect(handle.getAnnotations().items.length).toBe(1);
 
       // New model push -> bumps modelVersion and clears every client's bucket.
-      handle.push(syntheticMesh());
+      handle.pushModel(syntheticModel());
       // Wait for the server-side state mutation to be observable. The push
       // is synchronous so we don't strictly need to wait, but a tick lets
       // any in-flight WS frames settle.

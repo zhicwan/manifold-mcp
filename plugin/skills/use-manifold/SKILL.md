@@ -77,7 +77,7 @@ the canonical wording of the loop.
   auto-generated ambient TypeScript declarations for the sandbox globals
   (`Manifold`, `CrossSection`, `Mesh`, `console`, `result`). Kept in sync
   at build time with the runtime injection in
-  `src/server/sandbox/ambient-types.ts`; do not edit by hand.
+  `packages/modeling/src/sandbox/ambient-types.ts`; do not edit by hand.
 
 ## House rules for the LLM (you)
 

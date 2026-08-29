@@ -6,7 +6,7 @@ import {
   linuxChromiumBinaryForDesktop,
   macChromiumExeForBundleId,
   parseWindowsCommandExe,
-} from '../src/server/preview/launch-browser.js';
+} from '../packages/manifold3d-mcp/src/server/preview/launch-browser.js';
 
 describe('buildChromeAppArgs', () => {
   it('produces a single --app switch with the url', () => {

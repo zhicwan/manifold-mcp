@@ -31,8 +31,19 @@ npm test
 ```
 
 After building, the repo-root `.mcp.json` runs the local MCP server from
-`dist/server/index.js`, and `.github/skills/` points to `plugin/skills/` for
-local skill discovery.
+`packages/manifold3d-mcp/dist/server/index.js`, and `.github/skills/` points to
+`plugin/skills/` for local skill discovery.
+
+The npm workspace is split into private protocol, modeling, viewer, and
+viewer-host packages, a private production Copilot CLI Extension app, and the
+public `@zhicwan/manifold3d-mcp` CLI package.
+The default browser Viewer composes its tree-shakeable `@manifold3d/viewer/xr`
+subpath, while `@manifold3d/viewer/flat` remains free of immersive code.
+
+The optional Copilot CLI Extension builds to one self-contained
+`apps/copilot-extension/dist/extension.mjs`. See
+[`apps/copilot-extension/README.md`](apps/copilot-extension/README.md) for its
+build, verification, local install, and experimental Canvas embedding policy.
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for scripts, local plugin development,
 branch workflow, and sample authoring.
@@ -48,5 +59,5 @@ See [NOTICE](NOTICE) for upstream attribution.
 This project uses and adapts portions of
 [elalish/manifold](https://github.com/elalish/manifold) (Apache-2.0):
 
-- `src/server/sandbox/garbage-collector.ts`
+- `packages/modeling/src/sandbox/garbage-collector.ts`
 - Documentation under `plugin/skills/use-manifold/references/`

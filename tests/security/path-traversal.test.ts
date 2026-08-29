@@ -5,7 +5,7 @@
 // to put literal `..` segments and percent-encoded bytes into the request
 // line. The server defends by:
 //   * outright rejecting any URL containing `%` (no decoding attempted), and
-//   * resolving the requested path against `dist/public/` and rejecting any
+//   * resolving the requested path against `viewer-host/dist/public/` and rejecting any
 //     result whose `relative()` walk leaves the public root.
 // We assert all those branches end with a 4xx and never with package.json.
 
@@ -16,8 +16,8 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { createConnection } from 'node:net';
 
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
-const distPreview = join(repoRoot, 'dist', 'server', 'preview', 'preview-server.js');
-const distPublic = join(repoRoot, 'dist', 'public');
+const distPreview = join(repoRoot, 'packages', 'viewer-host', 'dist', 'preview', 'preview-server.js');
+const distPublic = join(repoRoot, 'packages', 'viewer-host', 'dist', 'public');
 const skipUnlessBuilt = !existsSync(distPreview) || !existsSync(join(distPublic, 'index.html'));
 
 interface PreviewModule {
@@ -80,7 +80,8 @@ const rawGet = async (port: number, requestPath: string): Promise<{ status: numb
       const head = headerEnd === -1 ? buf : buf.slice(0, headerEnd);
       const body = headerEnd === -1 ? '' : buf.slice(headerEnd + 4);
       const m = /^HTTP\/\d\.\d (\d{3})/.exec(head);
-      resolve({ status: m ? Number.parseInt(m[1], 10) : 0, body });
+      const statusText = m?.[1];
+      resolve({ status: statusText === undefined ? 0 : Number.parseInt(statusText, 10), body });
     });
     socket.on('error', reject);
     socket.setTimeout(5_000, () => {
@@ -91,12 +92,14 @@ const rawGet = async (port: number, requestPath: string): Promise<{ status: numb
 
 describe.skipIf(skipUnlessBuilt)('SEC-4: static asset path traversal is blocked', () => {
   let port = 0;
+  let roomPath = '';
   let stop: () => Promise<void>;
 
   beforeAll(async () => {
     const mod = (await import(pathToFileURL(distPreview).href)) as PreviewModule;
     const handle = await mod.startPreviewServer(47621, '127.0.0.1');
     port = handle.port;
+    roomPath = new URL(handle.url).pathname;
     stop = () => handle.close();
   }, 30_000);
 
@@ -106,38 +109,39 @@ describe.skipIf(skipUnlessBuilt)('SEC-4: static asset path traversal is blocked'
     }
   });
 
-  it('serves the index page on /', async () => {
-    const r = await rawGet(port, '/');
+  it('serves the index page only through the authenticated room route', async () => {
+    const r = await rawGet(port, roomPath);
     expect(r.status).toBe(200);
     expect(r.body).toMatch(/<html/i);
+    expect((await rawGet(port, '/')).status).toBe(404);
   });
 
   const asset = findStaticAsset();
   it.skipIf(!asset)(`serves an in-tree asset (${asset ?? '<none>'})`, async () => {
-    const r = await rawGet(port, asset!);
+    const r = await rawGet(port, `${roomPath}${asset!.replace(/^\/+/, '')}`);
     expect(r.status).toBe(200);
   });
 
   it('rejects literal `..` segments leading out of public/', async () => {
-    const r = await rawGet(port, '/../package.json');
+    const r = await rawGet(port, `${roomPath}../package.json`);
     expect(r.status).toBeGreaterThanOrEqual(400);
     expect(r.body).not.toMatch(/"name"\s*:\s*"@zhicwan\/manifold3d-mcp"/);
   });
 
   it('rejects URL-encoded `%2e%2e` traversal', async () => {
-    const r = await rawGet(port, '/%2e%2e/package.json');
+    const r = await rawGet(port, `${roomPath}%2e%2e/package.json`);
     expect(r.status).toBeGreaterThanOrEqual(400);
     expect(r.body).not.toMatch(/"name"\s*:\s*"@zhicwan\/manifold3d-mcp"/);
   });
 
   it('rejects mixed encoding `..%2fpackage.json`', async () => {
-    const r = await rawGet(port, '/..%2fpackage.json');
+    const r = await rawGet(port, `${roomPath}..%2fpackage.json`);
     expect(r.status).toBeGreaterThanOrEqual(400);
     expect(r.body).not.toMatch(/"name"\s*:\s*"@zhicwan\/manifold3d-mcp"/);
   });
 
   it('rejects double-encoded `%252e%252e/package.json`', async () => {
-    const r = await rawGet(port, '/%252e%252e/package.json');
+    const r = await rawGet(port, `${roomPath}%252e%252e/package.json`);
     expect(r.status).toBeGreaterThanOrEqual(400);
     expect(r.body).not.toMatch(/"name"\s*:\s*"@zhicwan\/manifold3d-mcp"/);
   });
@@ -145,7 +149,7 @@ describe.skipIf(skipUnlessBuilt)('SEC-4: static asset path traversal is blocked'
   it('rejects URLs that contain *any* percent-encoding', async () => {
     // The current policy is "if it contains %, reject" — defence in depth
     // against decoder-bypass tricks. Even a benign "%41" (A) should 4xx.
-    const r = await rawGet(port, '/%41');
+    const r = await rawGet(port, `${roomPath}%41`);
     expect(r.status).toBeGreaterThanOrEqual(400);
   });
 });

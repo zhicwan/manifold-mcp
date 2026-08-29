@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { compileSnippetTypeScript } from '../src/server/compiler/typescript-compiler.js';
+import { compileSnippetTypeScript } from '../packages/modeling/src/compiler/typescript-compiler.js';
 
 describe('compileSnippetTypeScript', () => {
   it('emits JavaScript for valid TypeScript snippets with helpers', () => {

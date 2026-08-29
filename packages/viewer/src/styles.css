@@ -1,0 +1,214 @@
+/*
+ * Viewer chrome that lives outside React's styling reach: the raw
+ * three.js canvas and the imperative marks overlay (flyouts, rubber
+ * band, mode cursors). Colors reference shadcn theme tokens so the
+ * whole layer flips with the .dark class.
+ */
+
+#view {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+  touch-action: none;
+}
+
+/* Cursor affordance per interaction mode (set on <body> by MarkTool). */
+body[data-mark-mode='point'] #view {
+  cursor: crosshair;
+}
+body[data-mark-mode='region'] #view {
+  cursor: cell;
+}
+
+/* ── Marks: overlay layer (flyouts + rubber band) ───────────────────── */
+
+#marks-overlay {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 5;
+}
+
+.marks-flyout,
+.marks-flyout-pill,
+.marks-flyout-body {
+  pointer-events: auto;
+}
+
+.marks-rubber-band {
+  position: absolute;
+  border: 1.5px dashed var(--color-primary);
+  background: color-mix(in srgb, var(--color-primary) 10%, transparent);
+  border-radius: 4px;
+  pointer-events: none;
+}
+
+.marks-flyout-layer {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.marks-flyout {
+  position: absolute;
+  top: 0;
+  left: 0;
+  /* translate set per-frame by FlyoutLayer.updatePositions */
+  pointer-events: auto;
+  transform-origin: top left;
+}
+
+.marks-flyout-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px 5px 8px;
+  color: #fff;
+  border: 1px solid rgba(255, 255, 255, 0.45);
+  border-radius: 999px;
+  font: 12px/1 var(--font-sans, system-ui, sans-serif);
+  font-weight: 500;
+  cursor: pointer;
+  transform: translate(8px, -50%);
+  white-space: nowrap;
+  box-shadow:
+    0 10px 15px -3px rgba(0, 0, 0, 0.15),
+    0 4px 6px -4px rgba(0, 0, 0, 0.1);
+  backdrop-filter: blur(12px) saturate(140%);
+  max-width: 220px;
+}
+.marks-flyout-pill[data-kind='point'] {
+  background: color-mix(in srgb, var(--color-destructive) 88%, transparent);
+}
+.marks-flyout-pill[data-kind='region'] {
+  background: #f59e0b;
+  color: #18181b;
+}
+.marks-flyout-pill:hover {
+  filter: brightness(1.05);
+}
+.marks-flyout-pill .marks-flyout-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  flex-shrink: 0;
+}
+.marks-flyout-pill .marks-flyout-label {
+  font-weight: 600;
+}
+.marks-flyout-pill .marks-flyout-note-preview {
+  opacity: 0.85;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 140px;
+}
+
+.marks-flyout-body {
+  display: none;
+  margin-top: 8px;
+  margin-left: 8px;
+  background: color-mix(in srgb, var(--color-popover) 85%, transparent);
+  backdrop-filter: blur(20px) saturate(140%);
+  border: 1px solid color-mix(in srgb, var(--color-border) 60%, transparent);
+  border-radius: var(--radius-xl, 0.875rem);
+  color: var(--color-popover-foreground);
+  padding: 12px;
+  width: 280px;
+  box-shadow:
+    0 10px 15px -3px rgba(0, 0, 0, 0.12),
+    0 4px 6px -4px rgba(0, 0, 0, 0.1);
+}
+.marks-flyout.expanded .marks-flyout-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.marks-flyout-body textarea.marks-flyout-textarea {
+  width: 100%;
+  font: inherit;
+  font-size: 0.875rem;
+  line-height: 1.25rem;
+  box-sizing: border-box;
+  min-height: 72px;
+  padding: 8px 10px;
+  border: 1px solid var(--color-input);
+  border-radius: var(--radius-md, 0.375rem);
+  resize: vertical;
+  background: color-mix(in srgb, var(--color-background) 70%, transparent);
+  color: var(--color-foreground);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+}
+.marks-flyout-body textarea.marks-flyout-textarea:focus {
+  outline: none;
+  border-color: var(--color-ring);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-ring) 24%, transparent);
+}
+.marks-flyout-body textarea.marks-flyout-textarea::placeholder {
+  color: var(--color-muted-foreground);
+}
+.marks-flyout-hint {
+  font-size: 0.75rem;
+  line-height: 1rem;
+  color: var(--color-muted-foreground);
+}
+.marks-flyout-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding-top: 2px;
+}
+.marks-flyout-btn {
+  font: inherit;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 32px;
+  min-width: 64px;
+  padding: 0 12px;
+  border-radius: var(--radius-md, 0.375rem);
+  cursor: pointer;
+  border: 1px solid transparent;
+  font-size: 0.75rem;
+  font-weight: 500;
+  line-height: 1rem;
+  transition:
+    background-color 120ms ease,
+    color 120ms ease,
+    border-color 120ms ease;
+}
+.marks-flyout-btn-subtle {
+  background: transparent;
+  color: var(--color-foreground);
+}
+.marks-flyout-btn-subtle:hover {
+  background: var(--color-accent);
+  color: var(--color-accent-foreground);
+}
+.marks-flyout-btn-primary {
+  background: var(--color-primary);
+  color: var(--color-primary-foreground);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+}
+.marks-flyout-btn-primary:hover {
+  background: color-mix(in srgb, var(--color-primary) 90%, transparent);
+}
+
+main[data-annotation-ui='compact'] .marks-flyout-body {
+  width: min(220px, calc(100vw - 112px));
+  padding: 8px;
+  gap: 6px;
+}
+
+main[data-annotation-ui='compact'] .marks-flyout-body textarea.marks-flyout-textarea {
+  min-height: 48px;
+  resize: none;
+}
+
+main[data-annotation-ui='compact'] .marks-flyout-hint {
+  display: none;
+}

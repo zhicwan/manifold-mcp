@@ -1,0 +1,67 @@
+{
+  "name": "@zhicwan/manifold3d-mcp",
+  "version": "1.0.1",
+  "description": "MCP server that lets an LLM build 3D models with manifold-3d, with live three.js preview and STL/3MF export.",
+  "type": "module",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/zhicwan/manifold3d-mcp.git"
+  },
+  "homepage": "https://github.com/zhicwan/manifold3d-mcp",
+  "bugs": {
+    "url": "https://github.com/zhicwan/manifold3d-mcp/issues"
+  },
+  "keywords": [
+    "mcp",
+    "manifold-3d",
+    "3d-printing",
+    "cad",
+    "llm",
+    "claude-code",
+    "copilot-cli"
+  ],
+  "bin": {
+    "manifold3d-mcp": "dist/server/index.js"
+  },
+  "files": [
+    "dist",
+    "!dist/**/*.map",
+    "!dist/.tsbuildinfo",
+    "README.md",
+    "LICENSE",
+    "NOTICE"
+  ],
+  "scripts": {
+    "build": "tsc -b",
+    "prepublishOnly": "npm --prefix ../.. run release:check",
+    "prepack": "npm --prefix ../.. run build && node ../../scripts/prepare-public-package.mjs",
+    "postpack": "node ../../scripts/prepare-public-package.mjs --clean",
+    "version": "node ../../scripts/sync-versions.mjs && git add ../../plugin/plugin.json ../../plugin/.claude-plugin/plugin.json ../../.github/plugin/marketplace.json ../../.claude-plugin/marketplace.json ../../plugin/.mcp.json ../../package-lock.json package.json"
+  },
+  "dependencies": {
+    "@manifold3d/modeling": "0.0.0-private",
+    "@manifold3d/protocol": "0.0.0-private",
+    "@manifold3d/viewer-host": "0.0.0-private",
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "manifold-3d": "^3.5.1",
+    "open": "^11.0.1",
+    "source-map": "^0.8.0",
+    "three": "^0.185.0",
+    "typescript": "^6.0.3",
+    "ws": "^8.21.0",
+    "yaml": "^2.9.0"
+  },
+  "bundledDependencies": [
+    "@manifold3d/modeling",
+    "@manifold3d/protocol",
+    "@manifold3d/viewer-host"
+  ],
+  "engines": {
+    "node": ">=24"
+  },
+  "publishConfig": {
+    "registry": "https://registry.npmjs.org/",
+    "access": "public"
+  }
+}
