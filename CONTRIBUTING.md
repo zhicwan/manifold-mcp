@@ -52,6 +52,12 @@ of a build.
 `clean` removes temporary build output, not the committed `plugins` directories.
 Generated JavaScript and copied references should change only through the build.
 
+Keep the complete lockfile, including optional native packages for other
+platforms. If npm produces an incomplete lock from an existing platform-specific
+installation, regenerate it with no workspace `node_modules` directories or
+old lockfile, then rebuild the plugins. Do not repair CI with extra
+platform-specific install commands.
+
 ## Skills
 
 Write shared geometry/API material in `skills/shared/references`. Keep the
