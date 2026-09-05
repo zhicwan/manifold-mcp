@@ -111,7 +111,11 @@ async function startViewerGeneration(
       overlayHost: overlay,
       getMesh: sceneRuntime.getMesh,
       requestRender: sceneRuntime.requestRender,
-      onModeChange: mode => viewerStore.setMarkMode(mode),
+      onModeChange: mode => {
+        if (mounted) {
+          viewerStore.setMarkMode(mode);
+        }
+      },
       onAnnotationCommit: () => flushSavedAnnotation(),
       onSelectionCreated: id => attachSelection(id),
     });
@@ -293,13 +297,13 @@ async function startViewerGeneration(
         download(export3mf(payload), filename(payload, '3mf'));
       },
       async exportStl(): Promise<void> {
-        const mesh = sceneRuntime.getMesh();
         const payload = viewerStore.getState().payload;
-        if (!mesh || !payload) {
+        if (!payload) {
           return;
         }
+        const name = filename(payload, 'stl');
         const { exportStl } = await import('@/exporters/stl');
-        download(exportStl(mesh), filename(payload, 'stl'));
+        download(exportStl(payload), name);
       },
     });
     partialCleanup.push(() => viewerStore.setViewerApi(null));
@@ -336,6 +340,7 @@ async function startViewerGeneration(
       dispose,
     };
   } catch (error) {
+    mounted = false;
     viewer.stop();
     const failures: unknown[] = [error];
     for (const cleanup of partialCleanup.reverse()) {

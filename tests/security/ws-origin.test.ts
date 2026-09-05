@@ -12,21 +12,14 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import WebSocket from 'ws';
+import type * as PreviewModuleSource from '../../apps/manifold3d-mcp/src/server/preview/preview-server.js';
 
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
-const distPreview = join(repoRoot, 'packages', 'viewer-host', 'dist', 'preview', 'preview-server.js');
-const distPublic = join(repoRoot, 'packages', 'viewer-host', 'dist', 'public', 'index.html');
+const distPreview = join(repoRoot, 'apps', 'manifold3d-mcp', 'build', 'server', 'preview', 'preview-server.js');
+const distPublic = join(repoRoot, 'apps', 'manifold3d-mcp', 'build', 'viewer', 'index.html');
 const skipUnlessBuilt = !existsSync(distPreview) || !existsSync(distPublic);
 
-interface PreviewModule {
-  startPreviewServer: (
-    preferredPort?: number,
-    host?: string,
-  ) => Promise<{
-    url: string;
-    close(): Promise<void>;
-  }>;
-}
+type PreviewModule = typeof PreviewModuleSource;
 
 const loadModule = async (): Promise<PreviewModule> => (await import(pathToFileURL(distPreview).href)) as PreviewModule;
 
@@ -81,7 +74,7 @@ describe.skipIf(skipUnlessBuilt)('SEC-3: preview WS rejects bad Origin/Host', ()
 
   beforeAll(async () => {
     const mod = await loadModule();
-    const handle = await mod.startPreviewServer(47471, '127.0.0.1');
+    const handle = await mod.startPreviewServer({ preferredPort: 47471, assetRoot: dirname(distPublic) });
     port = Number(new URL(handle.url).port);
     wsUrl = `${handle.url.replace(/^http/, 'ws')}ws`;
     stop = () => handle.close();
@@ -147,7 +140,11 @@ describe.skipIf(skipUnlessBuilt)('SEC-3: preview WS dev-mode allow-list', () => 
     savedNodeEnv = process.env.NODE_ENV;
     process.env.NODE_ENV = 'development';
     const mod = await loadModule();
-    const handle = await mod.startPreviewServer(47521, '127.0.0.1');
+    const handle = await mod.startPreviewServer({
+      preferredPort: 47521,
+      assetRoot: dirname(distPublic),
+      additionalOrigins: ['http://127.0.0.1:5173', 'http://localhost:5173'],
+    });
     port = Number(new URL(handle.url).port);
     wsUrl = `${handle.url.replace(/^http/, 'ws')}ws`;
     stop = () => handle.close();

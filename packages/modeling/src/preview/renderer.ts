@@ -33,6 +33,7 @@ interface RasterContext {
   readonly height: number;
   readonly rgba: Uint8ClampedArray;
   readonly depth: Float32Array;
+  readonly faceIds: Uint32Array;
 }
 
 interface ProjectedVertex {
@@ -42,6 +43,7 @@ interface ProjectedVertex {
 }
 
 interface Face {
+  id: number;
   ia: number;
   ib: number;
   ic: number;
@@ -86,6 +88,14 @@ class SoftwarePreviewRenderer implements PreviewRenderer {
     const vertices = unpackPositions(mesh);
     const indices = new Uint32Array(mesh.triVerts);
     const bbox = computeBounds(vertices, mesh);
+    // Keep camera transforms and grid indices independent of the world-space offset.
+    const origin = bbox.center.clone();
+    for (const vertex of vertices) {
+      vertex.sub(origin);
+    }
+    bbox.min.sub(origin);
+    bbox.max.sub(origin);
+    bbox.center.set(0, 0, 0);
     const camera = createCamera(view, width, height, bbox);
     const ctx = createRasterContext(width, height);
 
@@ -108,9 +118,9 @@ class SoftwarePreviewRenderer implements PreviewRenderer {
 
     drawCreaseEdges(ctx, faces);
     if (opts.includeAnnotations === true && opts.annotations && opts.annotations.length > 0) {
-      drawAnnotationOverlay(ctx, camera, opts.annotations, view, width, height);
+      drawAnnotationOverlay(ctx, camera, opts.annotations, origin, view, width, height);
     }
-    drawAxisGizmo(ctx, camera, bbox.center, width, height);
+    drawAxisGizmo(ctx, camera);
     drawText(ctx, 18, 18, `${view.toUpperCase()} VIEW`, LABEL_COLOR, 2);
 
     return { png: encodePng(ctx), width, height };
@@ -135,6 +145,7 @@ function clampDimension(value: number): number {
 function createRasterContext(width: number, height: number): RasterContext {
   const rgba = new Uint8ClampedArray(width * height * 4);
   const depth = new Float32Array(width * height);
+  const faceIds = new Uint32Array(width * height);
   depth.fill(Number.POSITIVE_INFINITY);
   for (let i = 0; i < rgba.length; i += 4) {
     rgba[i] = BACKGROUND[0];
@@ -142,7 +153,7 @@ function createRasterContext(width: number, height: number): RasterContext {
     rgba[i + 2] = BACKGROUND[2];
     rgba[i + 3] = 255;
   }
-  return { width, height, rgba, depth };
+  return { width, height, rgba, depth, faceIds };
 }
 
 function unpackPositions(mesh: ModelArtifact): THREE.Vector3[] {
@@ -183,17 +194,32 @@ function createCamera(
   view: CaptureView,
   width: number,
   height: number,
-  bbox: { center: THREE.Vector3; radius: number },
+  bbox: { min: THREE.Vector3; max: THREE.Vector3; center: THREE.Vector3; radius: number },
 ): THREE.OrthographicCamera {
   const aspect = width / height;
-  const halfHeight = bbox.radius * 0.82;
-  const halfWidth = halfHeight * aspect;
-  const camera = new THREE.OrthographicCamera(-halfWidth, halfWidth, halfHeight, -halfHeight, 0.01, bbox.radius * 20);
+  const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.01, bbox.radius * 20);
   const dir = viewDirection(view);
   camera.position.copy(bbox.center).addScaledVector(dir, bbox.radius * 4);
   camera.up.copy(viewUp(view));
   camera.lookAt(bbox.center);
   camera.updateMatrixWorld();
+  let projectedHalfWidth = 0;
+  let projectedHalfHeight = 0;
+  for (const x of [bbox.min.x, bbox.max.x]) {
+    for (const y of [bbox.min.y, bbox.max.y]) {
+      for (const z of [bbox.min.z, bbox.max.z]) {
+        const corner = new THREE.Vector3(x, y, z).applyMatrix4(camera.matrixWorldInverse);
+        projectedHalfWidth = Math.max(projectedHalfWidth, Math.abs(corner.x));
+        projectedHalfHeight = Math.max(projectedHalfHeight, Math.abs(corner.y));
+      }
+    }
+  }
+  // Retain the cardinal-view padding (0.82 * full extent), in both dimensions.
+  const halfHeight = Math.max(projectedHalfHeight, projectedHalfWidth / aspect, 0.5) * 1.64;
+  camera.left = -halfHeight * aspect;
+  camera.right = halfHeight * aspect;
+  camera.top = halfHeight;
+  camera.bottom = -halfHeight;
   camera.updateProjectionMatrix();
   return camera;
 }
@@ -263,6 +289,7 @@ function buildFaces(
     );
     const color = CLAY_BASE.clone().multiplyScalar(shade);
     faces.push({
+      id: i / 3 + 1,
       ia,
       ib,
       ic,
@@ -309,6 +336,7 @@ function drawTriangle(ctx: RasterContext, face: Face): void {
         continue;
       }
       ctx.depth[depthOffset] = z;
+      ctx.faceIds[depthOffset] = face.id;
       setPixel(ctx, x, y, face.color);
     }
   }
@@ -338,7 +366,11 @@ function drawCreaseEdges(ctx: RasterContext, faces: readonly Face[]): void {
     const start = projectedForIndex(face, record.a);
     const end = projectedForIndex(face, record.b);
     if (start && end) {
-      drawLine(ctx, start, end, EDGE_COLOR, 2);
+      drawLine(ctx, start, end, EDGE_COLOR, 2, {
+        start: start.z,
+        end: end.z,
+        faceIds: record.faces.map(owner => owner.id),
+      });
     }
   }
 }
@@ -372,19 +404,42 @@ function projectedForIndex(face: Face, index: number): ProjectedVertex | null {
 
 function drawGrid(
   ctx: RasterContext,
-  camera: THREE.Camera,
-  bbox: { min: THREE.Vector3; max: THREE.Vector3; radius: number },
+  camera: THREE.OrthographicCamera,
+  bbox: { min: THREE.Vector3 },
   vw: number,
   vh: number,
 ): void {
   const z = bbox.min.z;
-  const step = 10;
-  const pad = Math.max(step, Math.ceil(bbox.radius / step) * step);
-  const minX = Math.floor((bbox.min.x - pad) / step) * step;
-  const maxX = Math.ceil((bbox.max.x + pad) / step) * step;
-  const minY = Math.floor((bbox.min.y - pad) / step) * step;
-  const maxY = Math.ceil((bbox.max.y + pad) / step) * step;
-  for (let x = minX; x <= maxX; x += step) {
+  const direction = camera.getWorldDirection(new THREE.Vector3());
+  if (Math.abs(direction.z) < 1e-8) {
+    // The ground plane is edge-on in the horizontal presets.
+    const ground = project(new THREE.Vector3(0, 0, z), camera, vw, vh);
+    drawLine(ctx, { x: 0, y: ground.y }, { x: vw - 1, y: ground.y }, GRID_COLOR, 1);
+    return;
+  }
+  const corners: THREE.Vector3[] = [];
+  for (const x of [-1, 1]) {
+    for (const y of [-1, 1]) {
+      const corner = new THREE.Vector3(x, y, 0).unproject(camera);
+      corner.addScaledVector(direction, (z - corner.z) / direction.z);
+      corners.push(corner);
+    }
+  }
+  const minX = Math.min(...corners.map(corner => corner.x));
+  const maxX = Math.max(...corners.map(corner => corner.x));
+  const minY = Math.min(...corners.map(corner => corner.y));
+  const maxY = Math.max(...corners.map(corner => corner.y));
+  const lineBudget = Math.max(1, Math.ceil(Math.max(vw, vh) / 32));
+  const targetStep = Math.max(maxX - minX, maxY - minY) / lineBudget;
+  const decade = 10 ** Math.floor(Math.log10(targetStep));
+  const fraction = targetStep / decade;
+  const step = (fraction <= 1 ? 1 : fraction <= 2 ? 2 : fraction <= 5 ? 5 : 10) * decade;
+  const firstX = Math.ceil(minX / step);
+  const firstY = Math.ceil(minY / step);
+  const countX = Math.min(lineBudget + 1, Math.floor(maxX / step) - firstX + 1);
+  const countY = Math.min(lineBudget + 1, Math.floor(maxY / step) - firstY + 1);
+  for (let i = 0; i < countX; i += 1) {
+    const x = (firstX + i) * step;
     drawLine(
       ctx,
       project(new THREE.Vector3(x, minY, z), camera, vw, vh),
@@ -393,7 +448,8 @@ function drawGrid(
       1,
     );
   }
-  for (let y = minY; y <= maxY; y += step) {
+  for (let i = 0; i < countY; i += 1) {
+    const y = (firstY + i) * step;
     drawLine(
       ctx,
       project(new THREE.Vector3(minX, y, z), camera, vw, vh),
@@ -425,8 +481,8 @@ function drawBlobShadow(
   const cy = (minY + maxY) / 2;
   const rx = Math.max(8, (maxX - minX) * 0.58);
   const ry = Math.max(5, (maxY - minY) * 0.38);
-  for (let y = Math.floor(cy - ry); y <= Math.ceil(cy + ry); y += 1) {
-    for (let x = Math.floor(cx - rx); x <= Math.ceil(cx + rx); x += 1) {
+  for (let y = Math.max(0, Math.floor(cy - ry)); y <= Math.min(vh - 1, Math.ceil(cy + ry)); y += 1) {
+    for (let x = Math.max(0, Math.floor(cx - rx)); x <= Math.min(vw - 1, Math.ceil(cx + rx)); x += 1) {
       const d = ((x - cx) / rx) ** 2 + ((y - cy) / ry) ** 2;
       if (d <= 1) {
         blendPixel(ctx, x, y, [75, 85, 99], Math.round((1 - d) * 46));
@@ -435,8 +491,7 @@ function drawBlobShadow(
   }
 }
 
-function drawAxisGizmo(ctx: RasterContext, camera: THREE.Camera, center: THREE.Vector3, vw: number, vh: number): void {
-  const origin = project(center, camera, vw, vh);
+function drawAxisGizmo(ctx: RasterContext, camera: THREE.Camera): void {
   const axes: Array<{ label: string; dir: THREE.Vector3; color: [number, number, number] }> = [
     { label: 'X', dir: new THREE.Vector3(1, 0, 0), color: [220, 38, 38] },
     { label: 'Y', dir: new THREE.Vector3(0, 1, 0), color: [22, 163, 74] },
@@ -444,11 +499,13 @@ function drawAxisGizmo(ctx: RasterContext, camera: THREE.Camera, center: THREE.V
   ];
   const base = { x: ctx.width - 76, y: ctx.height - 58, z: 0 };
   for (const axis of axes) {
-    const p = project(center.clone().add(axis.dir), camera, vw, vh);
-    const dx = p.x - origin.x;
-    const dy = p.y - origin.y;
-    const len = Math.hypot(dx, dy) || 1;
-    const end = { x: base.x + (dx / len) * 30, y: base.y + (dy / len) * 30, z: 0 };
+    const direction = axis.dir.transformDirection(camera.matrixWorldInverse);
+    const dx = direction.x;
+    const dy = -direction.y;
+    const len = Math.hypot(dx, dy);
+    // A camera-aligned axis is a point, not a normalized roundoff vector.
+    const pixelScale = len > 1e-8 ? 30 / len : 0;
+    const end = { x: base.x + dx * pixelScale, y: base.y + dy * pixelScale, z: 0 };
     drawLine(ctx, base, end, axis.color, 2);
     drawText(ctx, Math.round(end.x + 3), Math.round(end.y - 4), axis.label, axis.color, 1);
   }
@@ -458,16 +515,17 @@ function drawAnnotationOverlay(
   ctx: RasterContext,
   camera: THREE.Camera,
   annotations: readonly WireAnnotation[],
+  origin: THREE.Vector3,
   captureView: CaptureView,
   vw: number,
   vh: number,
 ): void {
   for (const annotation of annotations) {
     if (annotation.kind === 'sketch') {
-      drawSketchAnnotation(ctx, camera, annotation, captureView, vw, vh);
+      drawSketchAnnotation(ctx, camera, annotation, origin, captureView, vw, vh);
       continue;
     }
-    const anchor = project(new THREE.Vector3().fromArray(annotation.worldCoord), camera, vw, vh);
+    const anchor = project(new THREE.Vector3().fromArray(annotation.worldCoord).sub(origin), camera, vw, vh);
     if (annotation.kind === 'point') {
       drawDot(ctx, anchor, POINT_COLOR, 5);
       drawLabel(ctx, Math.round(anchor.x + 9), Math.round(anchor.y - 10), annotation.partLabel, POINT_COLOR);
@@ -482,12 +540,13 @@ function drawSketchAnnotation(
   ctx: RasterContext,
   camera: THREE.Camera,
   annotation: WireAnnotation,
+  origin: THREE.Vector3,
   captureView: CaptureView,
   vw: number,
   vh: number,
 ): void {
   if (!annotation.viewPlane || !annotation.planeOrigin || !annotation.strokes) {
-    const anchor = project(new THREE.Vector3().fromArray(annotation.worldCoord), camera, vw, vh);
+    const anchor = project(new THREE.Vector3().fromArray(annotation.worldCoord).sub(origin), camera, vw, vh);
     drawRegionAnchor(ctx, anchor, SKETCH_COLOR);
     drawLabel(ctx, Math.round(anchor.x + 10), Math.round(anchor.y - 10), annotation.partLabel, SKETCH_COLOR);
     return;
@@ -499,7 +558,7 @@ function drawSketchAnnotation(
     let previous: ProjectedVertex | undefined;
     for (const point of stroke) {
       const projected = project(
-        sketchPointToWorld(annotation.viewPlane, annotation.planeOrigin, point),
+        sketchPointToLocal(annotation.viewPlane, annotation.planeOrigin, point, origin),
         camera,
         vw,
         vh,
@@ -514,19 +573,22 @@ function drawSketchAnnotation(
     }
   }
 
-  const anchor = labelAnchor ?? project(new THREE.Vector3().fromArray(annotation.worldCoord), camera, vw, vh);
+  const anchor =
+    labelAnchor ?? project(new THREE.Vector3().fromArray(annotation.worldCoord).sub(origin), camera, vw, vh);
   drawDot(ctx, anchor, SKETCH_COLOR, captureView === annotation.viewPlane ? 4 : 3);
   drawLabel(ctx, Math.round(anchor.x + 9), Math.round(anchor.y - 10), annotation.partLabel, SKETCH_COLOR);
 }
 
-function sketchPointToWorld(
+function sketchPointToLocal(
   viewPlane: NonNullable<WireAnnotation['viewPlane']>,
   planeOrigin: [number, number, number],
   point: [number, number],
+  origin: THREE.Vector3,
 ): THREE.Vector3 {
   const basis = sketchPlaneBasis(viewPlane);
   return new THREE.Vector3()
     .fromArray(planeOrigin)
+    .sub(origin)
     .addScaledVector(basis.u, point[0])
     .addScaledVector(basis.v, point[1]);
 }
@@ -561,22 +623,104 @@ function edge(a: ProjectedVertex, b: ProjectedVertex, x: number, y: number): num
   return (x - a.x) * (b.y - a.y) - (y - a.y) * (b.x - a.x);
 }
 
+interface ClippedLinePoint {
+  x: number;
+  y: number;
+  t: number;
+}
+
+function clipLine(
+  ctx: RasterContext,
+  start: Pick<ProjectedVertex, 'x' | 'y'>,
+  end: Pick<ProjectedVertex, 'x' | 'y'>,
+  radius: number,
+): [ClippedLinePoint, ClippedLinePoint] | null {
+  if (![start.x, start.y, end.x, end.y].every(Number.isFinite)) {
+    return null;
+  }
+  const minX = -radius;
+  const minY = -radius;
+  const maxX = ctx.width - 1 + radius;
+  const maxY = ctx.height - 1 + radius;
+  const code = (p: ClippedLinePoint): number =>
+    (p.x < minX ? 1 : p.x > maxX ? 2 : 0) | (p.y < minY ? 4 : p.y > maxY ? 8 : 0);
+  let a = { ...start, t: 0 };
+  let b = { ...end, t: 1 };
+  // Cohen-Sutherland clipping: each intersection fixes a viewport boundary.
+  // Clip coordinates themselves, not just t, which can round to the same value
+  // at both ends of a very long line crossing a small viewport.
+  for (let i = 0; i < 8; i += 1) {
+    const codeA = code(a);
+    const codeB = code(b);
+    if ((codeA | codeB) === 0) {
+      return [a, b];
+    }
+    if ((codeA & codeB) !== 0) {
+      return null;
+    }
+    const outside = codeA || codeB;
+    let x: number;
+    let y: number;
+    let t: number;
+    if (outside & 12) {
+      y = outside & 4 ? minY : maxY;
+      t = (y - a.y) / (b.y - a.y);
+      x = a.x + (b.x - a.x) * t;
+    } else {
+      x = outside & 1 ? minX : maxX;
+      t = (x - a.x) / (b.x - a.x);
+      y = a.y + (b.y - a.y) * t;
+    }
+    const intersection = { x, y, t: a.t + (b.t - a.t) * t };
+    if (outside === codeA) {
+      a = intersection;
+    } else {
+      b = intersection;
+    }
+  }
+  return null;
+}
+
 function drawLine(
   ctx: RasterContext,
   start: Pick<ProjectedVertex, 'x' | 'y'>,
   end: Pick<ProjectedVertex, 'x' | 'y'>,
   color: [number, number, number],
   thickness: number,
+  depthTest?: { start: number; end: number; faceIds: readonly number[] },
 ): void {
-  const steps = Math.ceil(Math.max(Math.abs(end.x - start.x), Math.abs(end.y - start.y)));
   const radius = Math.max(0, Math.floor(thickness / 2));
+  const clipped = clipLine(ctx, start, end, radius);
+  if (!clipped) {
+    return;
+  }
+  const [a, b] = clipped;
+  const steps = Math.ceil(Math.max(Math.abs(b.x - a.x), Math.abs(b.y - a.y)));
   for (let i = 0; i <= steps; i += 1) {
     const t = steps === 0 ? 0 : i / steps;
-    const x = Math.round(start.x + (end.x - start.x) * t);
-    const y = Math.round(start.y + (end.y - start.y) * t);
+    const x = Math.round(a.x + (b.x - a.x) * t);
+    const y = Math.round(a.y + (b.y - a.y) * t);
+    const originalT = a.t + (b.t - a.t) * t;
+    const z = depthTest ? depthTest.start + (depthTest.end - depthTest.start) * originalT : 0;
     for (let oy = -radius; oy <= radius; oy += 1) {
       for (let ox = -radius; ox <= radius; ox += 1) {
-        setPixel(ctx, x + ox, y + oy, color);
+        const px = x + ox;
+        const py = y + oy;
+        if (px < 0 || px >= ctx.width || py < 0 || py >= ctx.height) {
+          continue;
+        }
+        if (depthTest) {
+          const offset = py * ctx.width + px;
+          // The edge footprint may differ from the face sample on a slope.
+          // Its own visible face proves coverage without a large depth bias
+          // that would also expose nearby hidden solids. Other surfaces get
+          // only a Float32-rounding allowance. UI lines remain depth-free.
+          const ownsPixel = depthTest.faceIds.includes(ctx.faceIds[offset]!);
+          if (!ownsPixel && z > ctx.depth[offset]! + 1e-6) {
+            continue;
+          }
+        }
+        setPixel(ctx, px, py, color);
       }
     }
   }
@@ -590,9 +734,11 @@ function drawDot(
 ): void {
   const cx = Math.round(center.x);
   const cy = Math.round(center.y);
-  for (let y = cy - radius - 1; y <= cy + radius + 1; y += 1) {
-    for (let x = cx - radius - 1; x <= cx + radius + 1; x += 1) {
-      const d = Math.hypot(x - cx, y - cy);
+  for (let oy = -radius - 1; oy <= radius + 1; oy += 1) {
+    for (let ox = -radius - 1; ox <= radius + 1; ox += 1) {
+      const x = cx + ox;
+      const y = cy + oy;
+      const d = Math.hypot(ox, oy);
       if (d <= radius) {
         setPixel(ctx, x, y, color);
       } else if (d <= radius + 1.4) {
@@ -649,8 +795,8 @@ function fillRect(
   height: number,
   color: [number, number, number],
 ): void {
-  for (let yy = y; yy < y + height; yy += 1) {
-    for (let xx = x; xx < x + width; xx += 1) {
+  for (let yy = Math.max(0, y); yy < Math.min(ctx.height, y + height); yy += 1) {
+    for (let xx = Math.max(0, x); xx < Math.min(ctx.width, x + width); xx += 1) {
       setPixel(ctx, xx, yy, color);
     }
   }

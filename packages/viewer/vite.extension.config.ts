@@ -13,10 +13,10 @@ export default defineConfig({
   resolve: {
     alias: {
       '@': resolve(here, 'src'),
-      '@manifold3d/protocol': resolve(here, '../protocol/src'),
     },
   },
   build: {
+    license: { fileName: 'third-party-licenses.txt' },
     outDir: resolve(here, '../../apps/copilot-extension/build/viewer'),
     emptyOutDir: true,
     target: 'es2022',

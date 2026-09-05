@@ -21,7 +21,8 @@ const MANIFOLD_CANVAS_DISPLAY_NAME = 'Manifold 3D Viewer';
 export const ATTACH_ANNOTATION_BATCH_ACTION_ID = 'attach-annotation-batch';
 export const FIX_ANNOTATION_BATCH_ACTION_ID = 'fix-annotation-batch';
 export const ATTACH_LOCATION_SELECTION_ACTION_ID = 'attach-location-selection';
-export const FIX_ANNOTATION_BATCH_PROMPT = 'Revise the current manifold-3d model using the attached annotation batch.';
+export const FIX_ANNOTATION_BATCH_PROMPT =
+  'Revise the current manifold-3d model using the following static annotation batch snapshot.';
 const DEFAULT_SESSION_DISCONNECT_TIMEOUT_MS = 500;
 const DEFAULT_FIX_SEND_DRAIN_TIMEOUT_MS = 250;
 
@@ -366,38 +367,38 @@ class ExtensionController {
     };
   }
 
-  private async fixAnnotationBatch(
-    binding: RoomBinding,
-    context: HostActionHandlerContext,
-  ): Promise<HostActionHandlerResult> {
+  private fixAnnotationBatch(binding: RoomBinding, context: HostActionHandlerContext): HostActionHandlerResult {
     const attachment = this.buildBatchAttachment(context);
-    await this.pushAttachment(binding, annotationBatchTitle(attachment.batchId), attachment);
+    if (!this.canPublishTo(binding)) {
+      throw new Error('Canvas room is no longer available.');
+    }
     const session = this.getSession();
-    const operation = new Promise<void>(resolve => setImmediate(resolve))
-      .then(() => {
+    const operation = (async () => {
+      try {
         context.publish.running('Sending annotation fix to Copilot.');
-        return session.send({
+        await session.send({
           mode: 'enqueue',
-          prompt: FIX_ANNOTATION_BATCH_PROMPT,
+          prompt: `${FIX_ANNOTATION_BATCH_PROMPT}\n\n${JSON.stringify(attachment)}`,
+          displayPrompt: `Fix ${attachment.annotations.length} Manifold annotation${attachment.annotations.length === 1 ? '' : 's'} · ${attachment.batchId}`,
         });
-      })
-      .then(
-        () => {
-          context.publish.succeeded('Annotation fix was sent to Copilot.');
-        },
-        error => {
+        if (this.canPublishTo(binding)) {
+          context.publish.succeeded('Annotation fix was accepted by Copilot for enqueueing.');
+        }
+      } catch (error) {
+        if (this.canPublishTo(binding)) {
           context.publish.failed(`Could not send annotation fix: ${truncateStatusMessage(errorMessage(error))}`);
-          return this.logBestEffort(`Could not send Manifold annotation fix: ${errorMessage(error)}`, {
+          void this.logBestEffort(`Could not send Manifold annotation fix: ${errorMessage(error)}`, {
             level: 'warning',
           });
-        },
-      );
+        }
+      }
+    })();
     this.trackFixSend(operation);
 
     return {
       status: 'accepted',
       operationId: context.requestId,
-      message: 'Annotation fix is queued.',
+      message: 'Sending annotation fix to Copilot.',
     };
   }
 

@@ -19,6 +19,7 @@ import type { RunRequest, RunResult } from '@manifold3d/modeling/runner/protocol
 import { emptyReport } from '@manifold3d/modeling/validation/report.js';
 import { createAnnotationsMessage, type WireAnnotation } from '@manifold3d/protocol/wire/annotations.js';
 import { createHostActionInvocation } from '@manifold3d/protocol/wire/host-actions.js';
+import { buildAnnotationAttachment } from '../src/annotation-attachment.js';
 import {
   ATTACH_ANNOTATION_BATCH_ACTION_ID,
   ATTACH_LOCATION_SELECTION_ACTION_ID,
@@ -218,6 +219,7 @@ describe('production Copilot Extension composition', () => {
             },
           ],
         });
+        expect(harness.send).not.toHaveBeenCalled();
 
         await canvas.onClose?.(closeContext('canvas-a'));
         expect((await fetch(requiredUrl(firstOpen.url))).status).toBe(404);
@@ -230,19 +232,10 @@ describe('production Copilot Extension composition', () => {
     }
   });
 
-  it('pushes a fix pill before enqueueing once and replays idempotent statuses', async () => {
+  it('enqueues the complete fix snapshot without a pill and replays idempotent statuses', async () => {
     const sendResult = deferred<string>();
-    const sequence: string[] = [];
     const harness = createHarness({
-      sendAttachments: () => {
-        sequence.push('attachment');
-        return Promise.resolve();
-      },
-      send: options => {
-        sequence.push('send');
-        expect(options).toEqual({ mode: 'enqueue', prompt: FIX_ANNOTATION_BATCH_PROMPT });
-        return sendResult.promise;
-      },
+      send: () => sendResult.promise,
     });
     application = await startCopilotExtension(harness.startOptions);
     const opened = await harness.canvas().open(openContext('canvas-fix'));
@@ -272,18 +265,31 @@ describe('production Copilot Extension composition', () => {
         message =>
           message.kind === 'host_action_status' &&
           message.requestId === request.requestId &&
-          message.state === 'running',
+          message.state === 'running' &&
+          message.operationId === request.requestId,
       );
       await eventually(() => harness.send.mock.calls.length === 1);
-      expect(sequence).toEqual(['attachment', 'send']);
-      expect(harness.sendAttachments).toHaveBeenCalledTimes(1);
+      expect(harness.send).toHaveBeenLastCalledWith({
+        mode: 'enqueue',
+        prompt: `${FIX_ANNOTATION_BATCH_PROMPT}\n\n${JSON.stringify(
+          buildAnnotationAttachment({
+            mode: 'annotation-batch',
+            batchId: 'fix-batch',
+            modelVersion: version,
+            annotationRevision: 1,
+            annotations: [pointAnnotation('fix-me', version, 'make it taller')],
+          }),
+        )}`,
+        displayPrompt: 'Fix 1 Manifold annotation · fix-batch',
+      });
+      expect(harness.sendAttachments).not.toHaveBeenCalled();
 
       client.socket.send(JSON.stringify(request));
       await client.messages.waitForCount(
         message => message.kind === 'host_action_status' && message.requestId === request.requestId,
-        3,
+        4,
       );
-      expect(harness.sendAttachments).toHaveBeenCalledTimes(1);
+      expect(harness.sendAttachments).not.toHaveBeenCalled();
       expect(harness.send).toHaveBeenCalledTimes(1);
 
       sendResult.resolve('assistant-message');
@@ -301,7 +307,7 @@ describe('production Copilot Extension composition', () => {
           message.state === 'succeeded',
         2,
       );
-      expect(harness.sendAttachments).toHaveBeenCalledTimes(1);
+      expect(harness.sendAttachments).not.toHaveBeenCalled();
       expect(harness.send).toHaveBeenCalledTimes(1);
     } finally {
       client.socket.terminate();
@@ -315,12 +321,16 @@ describe('production Copilot Extension composition', () => {
     };
     process.on('unhandledRejection', onUnhandled);
     let attachmentAttempts = 0;
+    let sendAttempts = 0;
     const harness = createHarness({
       sendAttachments: () => {
         attachmentAttempts += 1;
         return attachmentAttempts === 1 ? Promise.reject(new Error('attachment failed')) : Promise.resolve();
       },
-      send: () => Promise.reject(new Error('send failed')),
+      send: () => {
+        sendAttempts += 1;
+        return sendAttempts === 1 ? Promise.reject(new Error('send failed')) : Promise.resolve('retry-message');
+      },
       log: () => Promise.reject(new Error('logging failed')),
     });
     application = await startCopilotExtension(harness.startOptions);
@@ -396,9 +406,35 @@ describe('production Copilot Extension composition', () => {
         annotationIds: ['noted'],
         input: { batchId: 'fix-batch' },
       });
+      expect(harness.sendAttachments).toHaveBeenCalledTimes(1);
+      expect(harness.send).toHaveBeenCalledTimes(1);
+
+      await expectFailedAction(client, {
+        requestId: 'send-failure',
+        actionId: FIX_ANNOTATION_BATCH_ACTION_ID,
+        modelVersion: version,
+        annotationRevision: 2,
+        annotationIds: ['noted'],
+        input: { batchId: 'fix-batch' },
+      });
+      await client.messages.waitForCount(
+        message =>
+          message.kind === 'host_action_status' && message.requestId === 'send-failure' && message.state === 'failed',
+        2,
+      );
+      expect(harness.send).toHaveBeenCalledTimes(1);
+      await invokeAction(client, {
+        requestId: 'send-retry',
+        actionId: FIX_ANNOTATION_BATCH_ACTION_ID,
+        modelVersion: version,
+        annotationRevision: 2,
+        annotationIds: ['noted'],
+        input: { batchId: 'retry-batch' },
+      });
 
       await new Promise<void>(resolvePromise => setTimeout(resolvePromise, 25));
-      expect(harness.send).toHaveBeenCalledTimes(1);
+      expect(harness.send).toHaveBeenCalledTimes(2);
+      expect(harness.sendAttachments).toHaveBeenCalledTimes(1);
       expect(unhandled).toEqual([]);
       expect(harness.joinConfig()?.hooks?.onUserPromptTransformed).toBeUndefined();
     } finally {
@@ -484,10 +520,6 @@ describe('production Copilot Extension composition', () => {
     const pendingDisconnect = deferred<void>();
     const sequence: string[] = [];
     const harness = createHarness({
-      sendAttachments: () => {
-        sequence.push('attachment');
-        return Promise.resolve();
-      },
       send: () => {
         sequence.push('fix-send');
         return pendingSend.promise;
@@ -542,7 +574,8 @@ describe('production Copilot Extension composition', () => {
 
       expect(elapsedMs).toBeGreaterThanOrEqual(50);
       expect(elapsedMs).toBeLessThan(500);
-      expect(sequence.slice(0, 2)).toEqual(['attachment', 'fix-send']);
+      expect(sequence[0]).toBe('fix-send');
+      expect(harness.sendAttachments).not.toHaveBeenCalled();
       expect(sequence.indexOf('disconnect')).toBeGreaterThanOrEqual(0);
       expect(sequence.indexOf('disconnect')).toBeLessThan(sequence.indexOf('modeling-dispose'));
       expect(harness.runner.disposeCalls).toBe(1);

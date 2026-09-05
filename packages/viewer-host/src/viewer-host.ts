@@ -201,6 +201,7 @@ class ViewerHostServer implements ViewerHost {
   private readonly allowedOrigins: ReadonlySet<string>;
   private readonly frameAncestors: readonly string[];
   private closed = false;
+  private closePromise: Promise<void> | undefined;
 
   private constructor(
     private readonly http: HttpServer,
@@ -299,18 +300,46 @@ class ViewerHostServer implements ViewerHost {
     return room;
   }
 
-  async close(): Promise<void> {
-    if (this.closed) {
-      return;
+  close(): Promise<void> {
+    if (this.closePromise) {
+      return this.closePromise;
     }
     this.closed = true;
     const rooms = [...this.roomsByCredential.values()];
     this.roomsByCredential.clear();
-    for (const room of rooms) {
-      room.disposeFromHost();
-    }
-    await new Promise<void>(resolve => this.wss.close(() => resolve()));
-    await closeHttp(this.http);
+    this.closePromise = (async () => {
+      const errors: unknown[] = [];
+      // Stop accepting before terminating connections; server.close alone waits
+      // indefinitely for partial requests. Upgraded WS sockets belong to rooms.
+      const httpClosed = closeHttp(this.http);
+      try {
+        this.http.closeAllConnections();
+      } catch (error) {
+        errors.push(error);
+      }
+      for (const room of rooms) {
+        try {
+          room.disposeFromHost();
+        } catch (error) {
+          errors.push(error);
+        }
+      }
+      const settled = await Promise.allSettled([
+        httpClosed,
+        new Promise<void>((resolve, reject) => {
+          this.wss.close(error => (error ? reject(error) : resolve()));
+        }),
+      ]);
+      for (const result of settled) {
+        if (result.status === 'rejected') {
+          errors.push(result.reason as unknown);
+        }
+      }
+      if (errors.length > 0) {
+        throw new AggregateError(errors, 'Viewer Host cleanup failed.');
+      }
+    })();
+    return this.closePromise;
   }
 
   removeRoom(room: ViewerRoomImpl): void {

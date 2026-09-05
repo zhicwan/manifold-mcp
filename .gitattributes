@@ -1,2 +1,4 @@
 samples/manifold-sandbox.d.ts linguist-generated=true
-skills/use-manifold/references/manifold-sandbox.d.ts linguist-generated=true
+skills/shared/references/manifold-sandbox.d.ts linguist-generated=true
+plugins/** linguist-generated=true
+plugins/**/*.mjs -whitespace

@@ -48,6 +48,7 @@ export class Viewer {
   private readonly scene = new THREE.Scene();
   private readonly camera: THREE.PerspectiveCamera;
   private readonly controls: OrbitControls;
+  private readonly rendererSize = new THREE.Vector2();
   private readonly modelRoot = new THREE.Group();
   private readonly runtime: ViewerSceneRuntime;
   private grid: THREE.GridHelper;
@@ -427,7 +428,8 @@ export class Viewer {
   private resize(): void {
     const w = this.canvas.clientWidth || window.innerWidth;
     const h = this.canvas.clientHeight || window.innerHeight;
-    if (this.canvas.width !== w || this.canvas.height !== h) {
+    const size = this.renderer.getSize(this.rendererSize);
+    if (size.x !== w || size.y !== h) {
       this.renderer.setSize(w, h, false);
       this.viewCube?.updateLayout();
       this.camera.aspect = w / h;

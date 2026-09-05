@@ -18,7 +18,7 @@ import {
   embeddedTypeScriptLibBytes,
   embeddedViewerAssetBytes,
   embeddedViewerAssetCount,
-} from 'virtual:manifold-extension-resources';
+} from 'virtual:manifold-resources';
 
 type EmbeddedAssets = ViewerAssetManifest;
 
@@ -104,6 +104,19 @@ export async function runExtensionSelfTest(options: ExtensionSelfTestOptions): P
     assert(execution.report.stats.vertices === 8, 'Self-test cube vertex count is wrong.');
     assert(execution.report.stats.volume === 24, 'Self-test cube volume is wrong.');
     assert(execution.report.stats.surfaceArea === 52, 'Self-test cube surface area is wrong.');
+
+    const failed = await modeling.validate({
+      code: [
+        'const value: { nested?: { size: number } } = {};',
+        'const missing = value.nested as { size: number };',
+        '// The error must map to line 4 without any external source-map resource.',
+        'result = Manifold.cube(missing.size);',
+      ].join('\n'),
+    });
+    assert(
+      failed.report.errors.some(issue => issue.code === 'RUNTIME_ERROR' && issue.line === 4),
+      'Single-file runtime error did not map to the original source line.',
+    );
 
     const assets = await verifyAssets(roomA.url, options.viewerAssets);
     const indexResponse = await fetch(roomA.url);

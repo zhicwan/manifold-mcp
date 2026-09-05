@@ -10,6 +10,6 @@
     "../packages/modeling/src/**/*.ts",
     "../packages/protocol/src/**/*.ts",
     "../packages/viewer-host/src/**/*.ts",
-    "../packages/manifold3d-mcp/src/**/*.ts"
+    "../apps/manifold3d-mcp/src/**/*.ts"
   ]
 }

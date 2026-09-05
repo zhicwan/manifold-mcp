@@ -34,8 +34,7 @@ function createViewerRoomProxy(): Record<string, string | ProxyOptions> {
   };
 }
 
-// Viewer is a standalone Vite project that bundles into viewer-host's
-// dist/public directory, beside the preview server that serves it at runtime.
+// The MCP app embeds this browser/XR build into its standalone runtime.
 export default defineConfig(({ mode }) => ({
   root: here,
   base: './',
@@ -43,11 +42,11 @@ export default defineConfig(({ mode }) => ({
   resolve: {
     alias: {
       '@': resolve(here, 'src'),
-      '@manifold3d/protocol': resolve(here, '../protocol/src'),
     },
   },
   build: {
-    outDir: resolve(here, '../viewer-host/dist/public'),
+    license: { fileName: 'third-party-licenses.txt' },
+    outDir: resolve(here, '../../apps/manifold3d-mcp/build/viewer'),
     emptyOutDir: true,
     target: 'es2022',
     // Source maps double the published tarball; only emit them in

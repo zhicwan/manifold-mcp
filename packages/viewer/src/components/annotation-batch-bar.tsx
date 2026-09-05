@@ -5,13 +5,14 @@ import { glass } from '@/components/glass';
 import { useHostActionsSnapshot } from '@/components/host-actions';
 import { Button } from '@/components/ui/button';
 import { hasPendingHostActionRequest, hostActionDisabledReason } from '@/host-actions/client';
-import { useAnnotations, useViewerState } from '@/store';
+import { useAnnotations, useViewerState, useViewerStore, type MarksRuntime } from '@/store';
 import { MAX_HOST_ACTION_ANNOTATION_IDS, type HostActionDescriptor } from '@manifold3d/protocol/wire/host-actions.js';
 
 const ATTACH_BATCH_ACTION = 'attach-annotation-batch';
 const FIX_BATCH_ACTION = 'fix-annotation-batch';
 
 export function AnnotationBatchBar() {
+  const viewerStore = useViewerStore();
   const markMode = useViewerState(state => state.markMode);
   const payload = useViewerState(state => state.payload);
   const viewerApi = useViewerState(state => state.viewerApi);
@@ -19,7 +20,8 @@ export function AnnotationBatchBar() {
   const client = useViewerState(state => state.hostActionsClient);
   const hostActions = useHostActionsSnapshot();
   useAnnotations(marks?.store ?? null);
-  const [pendingAction, setPendingAction] = useState<string | null>(null);
+  const [pending, setPending] = useState<{ actionId: string; marks: MarksRuntime } | null>(null);
+  const pendingAction = pending?.marks === marks ? pending.actionId : null;
 
   if (markMode !== 'annotate' || !marks) {
     return null;
@@ -32,6 +34,10 @@ export function AnnotationBatchBar() {
   const batchEmpty = batch.annotationIds.length === 0;
   const batchTooLarge = batch.annotationIds.length > MAX_HOST_ACTION_ANNOTATION_IDS;
   const busy = pendingAction !== null;
+  const isCurrent = (): boolean => {
+    const state = viewerStore.getState();
+    return state.marksRuntime === marks && state.viewerApi === viewerApi && state.hostActionsClient === client;
+  };
   const disabledReason = (action: HostActionDescriptor): string | undefined =>
     batchTooLarge
       ? `A batch can contain at most ${MAX_HOST_ACTION_ANNOTATION_IDS} annotations.`
@@ -44,6 +50,9 @@ export function AnnotationBatchBar() {
         });
 
   const finishLocally = (kind: 'freeze' | 'cancel'): void => {
+    if (!isCurrent()) {
+      return;
+    }
     if (kind === 'freeze') {
       marks.commitOpenDraft();
       marks.store.freezeBatch(batch.batchId);
@@ -55,7 +64,7 @@ export function AnnotationBatchBar() {
   };
 
   const invoke = (actionId: string): void => {
-    if (!client || batchEmpty || busy) {
+    if (!client || batchEmpty || busy || !isCurrent()) {
       return;
     }
     marks.commitOpenDraft();
@@ -68,13 +77,17 @@ export function AnnotationBatchBar() {
     }
     marks.flushAnnotations();
     viewerApi?.setMarkMode('orbit');
-    setPendingAction(actionId);
+    const request = { actionId, marks };
+    setPending(request);
     const operation = client
       .invokeAndWait(actionId, {
         annotationIds: committedDraft.annotationIds,
         input: { batchId: committedDraft.batchId },
       })
       .then(status => {
+        if (!isCurrent()) {
+          return;
+        }
         if (status.state === 'succeeded') {
           marks.store.freezeBatch(committedDraft.batchId);
         } else {
@@ -85,16 +98,19 @@ export function AnnotationBatchBar() {
         marks.flushAnnotations();
       })
       .catch(() => {
+        if (!isCurrent()) {
+          return;
+        }
         const restored = marks.store.restoreBatch(committedDraft.batchId);
         marks.flushAnnotations();
         if (restored) {
           viewerApi?.setMarkMode('annotate');
         }
       });
-    void operation.then(
-      () => setPendingAction(null),
-      () => setPendingAction(null),
-    );
+    void operation.then(clearPending, clearPending);
+    function clearPending(): void {
+      setPending(current => (current === request ? null : current));
+    }
   };
 
   return (

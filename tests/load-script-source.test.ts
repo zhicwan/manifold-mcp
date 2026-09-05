@@ -11,13 +11,13 @@ import type { ChildProcessWithoutNullStreams } from 'node:child_process';
 
 import { MAX_CODE_BYTES } from '../packages/modeling/src/validation/validators.js';
 
-// `loadScriptSource` is not exported from packages/manifold3d-mcp/src/server/mcp/mcp-server.ts (and
+// `loadScriptSource` is not exported from apps/manifold3d-mcp/src/server/mcp/mcp-server.ts (and
 // that file is in the no-touch list for this phase). We exercise its behaviour
 // through the running MCP server over stdio. This is an integration-style
 // unit test scoped to one helper, gated on the dist build that smoke uses.
 
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..');
-const entry = join(repoRoot, 'packages', 'manifold3d-mcp', 'dist', 'server', 'index.js');
+const entry = join(repoRoot, 'apps', 'manifold3d-mcp', 'dist', 'manifold.mjs');
 
 interface ToolResult {
   content: [{ type: 'text'; text: string }];

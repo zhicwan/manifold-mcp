@@ -4,12 +4,12 @@ import { existsSync, readdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
-import type * as PreviewModuleNs from '../packages/viewer-host/src/preview/preview-server.js';
+import type * as PreviewModuleNs from '../apps/manifold3d-mcp/src/server/preview/preview-server.js';
 
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..');
-const distPreview = join(repoRoot, 'packages', 'viewer-host', 'dist', 'preview', 'preview-server.js');
-const distPublic = join(repoRoot, 'packages', 'viewer-host', 'dist', 'public', 'index.html');
-const distAssets = join(repoRoot, 'packages', 'viewer-host', 'dist', 'public', 'assets');
+const distPreview = join(repoRoot, 'apps', 'manifold3d-mcp', 'build', 'server', 'preview', 'preview-server.js');
+const distPublic = join(repoRoot, 'apps', 'manifold3d-mcp', 'build', 'viewer', 'index.html');
+const distAssets = join(repoRoot, 'apps', 'manifold3d-mcp', 'build', 'viewer', 'assets');
 const skipUnlessBuilt = !existsSync(distPreview) || !existsSync(distPublic);
 
 type PreviewModule = typeof PreviewModuleNs;
@@ -19,7 +19,7 @@ let handle: PreviewModule extends { startPreviewServer: (...args: never[]) => Pr
 describe.skipIf(skipUnlessBuilt)('preview server: cache-control matrix', () => {
   beforeAll(async () => {
     previewModule = (await import(pathToFileURL(distPreview).href)) as PreviewModule;
-    handle = await previewModule.startPreviewServer(47571);
+    handle = await previewModule.startPreviewServer({ preferredPort: 47571, assetRoot: dirname(distPublic) });
   }, 15_000);
 
   afterAll(async () => {
@@ -41,14 +41,9 @@ describe.skipIf(skipUnlessBuilt)('preview server: cache-control matrix', () => {
   });
 
   it('returns immutable+max-age=1y for hashed assets', async () => {
-    if (!existsSync(distAssets)) {
-      // Viewer not built with hashed assets — skip rather than fail. The
-      // skipUnlessBuilt gate above already covers a missing viewer-host/dist/public.
-      return;
-    }
     const candidates = readdirSync(distAssets);
     const asset = candidates.find(f => f.endsWith('.js') || f.endsWith('.css'));
-    expect(asset, 'expected at least one hashed asset under viewer-host/dist/public/assets/').toBeDefined();
+    expect(asset, 'expected at least one hashed Viewer asset').toBeDefined();
     const res = await fetch(`${handle.url}assets/${asset!}`);
     expect(res.status).toBe(200);
     expect(res.headers.get('cache-control')).toBe('public, max-age=31536000, immutable');

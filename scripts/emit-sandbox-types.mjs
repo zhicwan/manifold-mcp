@@ -11,9 +11,8 @@
  *
  *   - samples/manifold-sandbox.d.ts
  *       So `samples/*.ts` typecheck in editors and via `tsc --noEmit`.
- *   - plugin/skills/use-manifold/references/manifold-sandbox.d.ts
- *       So the Copilot skill can read the authoritative typing alongside the
- *       prose reference docs.
+ *   - skills/shared/references/manifold-sandbox.d.ts
+ *       Copied into each self-contained plugin alongside its reference docs.
  *
  * Both outputs carry a "DO NOT EDIT" header and are meant to be regenerated
  * as part of `npm run build`.
@@ -23,6 +22,7 @@ import { writeFileSync, mkdirSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import process from 'node:process';
+import { format, resolveConfig } from 'prettier';
 
 import { sandboxAmbientDeclarations } from '../packages/modeling/src/sandbox/ambient-types.ts';
 
@@ -31,7 +31,7 @@ const repoRoot = resolve(here, '..');
 
 const TARGETS = [
   resolve(repoRoot, 'samples/manifold-sandbox.d.ts'),
-  resolve(repoRoot, 'plugin/skills/use-manifold/references/manifold-sandbox.d.ts'),
+  resolve(repoRoot, 'skills/shared/references/manifold-sandbox.d.ts'),
 ];
 
 const HEADER = `// =============================================================================
@@ -48,9 +48,13 @@ const HEADER = `// =============================================================
 
 `;
 
-function main() {
+async function main() {
   const body = sandboxAmbientDeclarations.replace(/^\n+/, '').replace(/\n+$/, '\n');
-  const output = `${HEADER}${body}`;
+  const output = await format(`${HEADER}${body}`, {
+    ...(await resolveConfig(TARGETS[0])),
+    parser: 'typescript',
+    endOfLine: 'lf',
+  });
 
   for (const target of TARGETS) {
     mkdirSync(dirname(target), { recursive: true });
@@ -59,4 +63,4 @@ function main() {
   }
 }
 
-main();
+await main();

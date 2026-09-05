@@ -11,19 +11,15 @@ import {
   type ModelHeader,
   type ViewerModelFrame,
 } from '../packages/protocol/src/wire/model.js';
-import type * as PreviewModuleNs from '../packages/viewer-host/src/preview/preview-server.js';
+import type * as PreviewModuleNs from '../apps/manifold3d-mcp/src/server/preview/preview-server.js';
 
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..');
-const distPreview = join(repoRoot, 'packages', 'viewer-host', 'dist', 'preview', 'preview-server.js');
-const distPublic = join(repoRoot, 'packages', 'viewer-host', 'dist', 'public', 'index.html');
+const distPreview = join(repoRoot, 'apps', 'manifold3d-mcp', 'build', 'server', 'preview', 'preview-server.js');
+const distPublic = join(repoRoot, 'apps', 'manifold3d-mcp', 'build', 'viewer', 'index.html');
 
 const skipUnlessBuilt = !existsSync(distPreview) || !existsSync(distPublic);
 
-// Import the COMPILED preview-server (not the TS source). PUBLIC_DIR is
-// computed relative to the file's own location at import-time; under
-// vitest with esbuild, the TS source path is packages/viewer-host/src/preview/ which
-// has no sibling public/ dir. Pointing at dist keeps PUBLIC_DIR aligned
-// with viewer-host/dist/public/ where Vite emits the viewer bundle.
+// Exercise the built application adapter with an explicit asset provider root.
 type PreviewModule = typeof PreviewModuleNs;
 let previewModule: PreviewModule;
 let handle: PreviewModule extends { startPreviewServer: (...args: never[]) => Promise<infer H> } ? H : never;
@@ -56,7 +52,7 @@ function syntheticModel(): ViewerModelFrame {
 describe.skipIf(skipUnlessBuilt)('preview server', () => {
   beforeAll(async () => {
     previewModule = (await import(pathToFileURL(distPreview).href)) as PreviewModule;
-    handle = await previewModule.startPreviewServer(47371);
+    handle = await previewModule.startPreviewServer({ preferredPort: 47371, assetRoot: dirname(distPublic) });
   }, 15_000);
 
   afterAll(async () => {
@@ -83,7 +79,11 @@ describe.skipIf(skipUnlessBuilt)('preview server', () => {
   });
 
   it('sends a versioned header and binary frames that decode as the pushed model', async () => {
-    const localHandle = await previewModule.startPreviewServer(47771);
+    const localHandle = await previewModule.startPreviewServer({
+      preferredPort: 47771,
+      assetRoot: dirname(distPublic),
+      additionalOrigins: ['http://127.0.0.1:5173', 'http://localhost:5173'],
+    });
     const wsUrl = `${localHandle.url.replace(/^http/, 'ws')}ws`;
     const origin = new URL(localHandle.url).origin;
     const host = new URL(localHandle.url).host;

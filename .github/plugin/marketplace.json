@@ -1,26 +1,32 @@
 {
   "name": "manifold3d-mcp",
-  "owner": {
-    "name": "Zhicheng Wang",
-    "email": "imwosz@hotmail.com"
-  },
+  "owner": { "name": "Zhicheng Wang" },
   "metadata": {
-    "description": "MCP server and skill for designing 3D-printable models with manifold-3d in Copilot CLI.",
-    "version": "1.0.0"
+    "description": "Design, validate and preview 3D-printable models with shared Manifold tooling.",
+    "version": "1.1.0"
   },
   "plugins": [
     {
       "name": "manifold",
-      "description": "MCP server + skill for designing 3D-printable models with manifold-3d. Validates LLM-generated TypeScript snippets and streams the result to a live three.js preview with STL/3MF export.",
-      "version": "1.0.1",
-      "source": "./plugin",
-      "author": {
-        "name": "Zhicheng Wang"
-      },
+      "description": "Manifold modeling tools, browser/XR Viewer and skill over MCP.",
+      "version": "1.1.0",
+      "source": "./plugins/manifold",
+      "author": { "name": "Zhicheng Wang" },
       "homepage": "https://github.com/zhicwan/manifold3d-mcp",
       "repository": "https://github.com/zhicwan/manifold3d-mcp",
       "license": "Apache-2.0",
-      "keywords": ["mcp", "manifold-3d", "3d-printing", "cad", "copilot-cli"]
+      "keywords": ["manifold-3d", "3d-printing", "cad", "mcp", "copilot"]
+    },
+    {
+      "name": "manifold-extension",
+      "description": "Manifold modeling tools, native Copilot Canvas and annotation messages.",
+      "version": "1.1.0",
+      "source": "./plugins/manifold-extension",
+      "author": { "name": "Zhicheng Wang" },
+      "homepage": "https://github.com/zhicwan/manifold3d-mcp",
+      "repository": "https://github.com/zhicwan/manifold3d-mcp",
+      "license": "Apache-2.0",
+      "keywords": ["manifold-3d", "3d-printing", "cad", "mcp", "copilot"]
     }
   ]
 }

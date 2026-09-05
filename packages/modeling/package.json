@@ -44,9 +44,9 @@
     "build": "tsc -b"
   },
   "dependencies": {
+    "@jridgewell/trace-mapping": "^0.3.31",
     "@manifold3d/protocol": "0.0.0-private",
     "manifold-3d": "^3.5.1",
-    "source-map": "^0.8.0",
     "three": "^0.185.0",
     "typescript": "^6.0.3",
     "yaml": "^2.9.0"

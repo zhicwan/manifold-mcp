@@ -1,195 +1,114 @@
-# Contributing to manifold3d-mcp
+# Contributing
 
-Thank you for your interest in contributing!
+Use Node.js 24 or later and npm. npm installs development dependencies; it is
+not the distribution channel for the plugins.
 
-## Prerequisites
-
-- [Node.js](https://nodejs.org/) >= 24
-- npm (ships with Node.js)
-
-## Getting started
-
-```bash
-git clone https://github.com/zhicwan/manifold3d-mcp.git
-cd manifold3d-mcp
+```sh
 npm ci
+npm run build:plugins
 ```
 
-## Local plugin development
+## Ownership
 
-Plugin files live under `plugin/`. The repo-root `.mcp.json` points the
-`manifold3d-mcp` MCP server at your local
-`packages/manifold3d-mcp/dist/server/index.js`, so after building your changes
-are picked up automatically:
+| Directory                | Responsibility                                            |
+| ------------------------ | --------------------------------------------------------- |
+| `apps/manifold3d-mcp`    | MCP/stdio, browser launch and single-room composition     |
+| `apps/copilot-extension` | Copilot SDK, Canvas and message integration               |
+| `packages/protocol`      | Browser/Node data contracts                               |
+| `packages/modeling`      | Compilation, execution, model state and software capture  |
+| `packages/viewer`        | Scene, annotation UI, exports and optional XR subpath     |
+| `packages/viewer-host`   | HTTP/WS, authenticated rooms and host actions             |
+| `skills`                 | Shared references and two directly authored skill entries |
+| `plugins`                | Generated, self-contained installation directories        |
 
-```bash
-npm run build
-```
+Applications depend on reusable packages, not the reverse. Consumers use package
+exports rather than cross-package source aliases. XR presentation transforms
+must not affect canonical model geometry or exports.
 
-The repo ships two `.mcp.json` files with the same server name (`manifold3d-mcp`):
+## Build and check
 
-| File               | Command                                             | Purpose                                 |
-| ------------------ | --------------------------------------------------- | --------------------------------------- |
-| `.mcp.json` (root) | `node packages/manifold3d-mcp/dist/server/index.js` | Local development against your build    |
-| `plugin/.mcp.json` | `npx -y @zhicwan/manifold3d-mcp@1.0.x`              | Published package for end-user installs |
+| Command                            | Purpose                                                                   |
+| ---------------------------------- | ------------------------------------------------------------------------- |
+| `npm run build:plugins`            | Build both single-file applications and assemble plugins                  |
+| `npm run build:plugins -- --check` | Build and compare without replacing committed plugin output               |
+| `npm run build:mcp`                | Build the standalone MCP runtime and its browser/XR Viewer                |
+| `npm run build:extension`          | Build the single-file native Extension and flat Viewer                    |
+| `npm run build:sandbox-types`      | Regenerate canonical declarations and sample types                        |
+| `npm run check:sync`               | Check authored skill tool lists against application tools                 |
+| `npm run typecheck`                | Type-check the workspace                                                  |
+| `npm run lint`                     | Lint authored code                                                        |
+| `npm run format:check`             | Check authored formatting                                                 |
+| `npm test`                         | Build, check generated plugins, and run behavioral and distribution tests |
+| `npm run verify:extension`         | Verify the Extension can run its self-test without sibling resources      |
+| `npm run verify:viewer-flat`       | Verify the flat Viewer does not include XR                                |
+| `npm run dev:viewer`               | Run the demo Viewer                                                       |
 
-When working from the repo root the local config takes precedence, so your
-changes are picked up automatically after `npm run build`.
+The root `.mcp.json` starts `apps/manifold3d-mcp/dist/manifold.mjs`. Build first.
+For local plugin development, load the assembled plugin with the host's
+`--plugin-dir` option or install that directory in an isolated host configuration.
+Do not replace a user's installed plugin or reload their active Canvas as part
+of a build.
 
-To test the published plugin experience (via `npx`), install from outside the
-repo checkout:
+`clean` removes temporary build output, not the committed `plugins` directories.
+Generated JavaScript and copied references should change only through the build.
 
-```bash
-# Copilot CLI
-/plugin install zhicwan/manifold3d-mcp:plugin
+## Skills
 
-# Claude Code
-claude --plugin-dir /path/to/manifold3d-mcp/plugin
-```
+Write shared geometry/API material in `skills/shared/references`. Keep the
+MCP entry and workflows in `skills/use-manifold`, and the Canvas entry and
+workflows in `skills/use-manifold-canvas`.
 
-> **Note:** workspace `dist/` directories are git-ignored. You must run
-> `npm run build` at least once before the root `.mcp.json` can start the local
-> MCP server.
+The build copies each entry and the shared references into that plugin's own
+`skills` directory. Duplication in installation output is intentional: either
+plugin must work without the repository or the other plugin. Shared filenames
+must not collide with host-specific references.
 
-## Scripts
+Use ordinary Markdown and relative links within the assembled skill. There is
+no macro language or conditional compiler. MCP's `get_annotations` workflow and
+Canvas's Fix/Attach workflow are different and should remain explicit.
 
-| Command                          | Description                                          |
-| -------------------------------- | ---------------------------------------------------- |
-| `npm run build`                  | Full build (viewer + server + sandbox types)         |
-| `npm run build:extension`        | Build the single-file Copilot CLI Extension          |
-| `npm run test:extension`         | Run Extension composition and attachment tests       |
-| `npm run verify:extension`       | Build, test, inspect, and self-test the Extension    |
-| `npm run extension:install`      | Build and copy the Extension into local discovery    |
-| `npm run verify:viewer-flat`     | Build and verify the optional-XR Viewer boundary     |
-| `npm run plugin:build`           | Alias for the full build before local plugin testing |
-| `npm run plugin:copilot:install` | Build, then install `./plugin` into Copilot CLI      |
-| `npm run typecheck`              | TypeScript type checking (all projects)              |
-| `npm run lint`                   | ESLint                                               |
-| `npm run lint:fix`               | ESLint with auto-fix                                 |
-| `npm run format`                 | Prettier formatting                                  |
-| `npm run format:check`           | Prettier check (CI)                                  |
-| `npm test`                       | Build, then run the full unit + smoke suite          |
-| `npm run test:unit`              | Build, then run all non-smoke tests                  |
-| `npm run test:smoke`             | Smoke tests (builds first)                           |
-| `npm run test:watch`             | Build, then run non-smoke tests in watch mode        |
+The sandbox declaration source is
+`packages/modeling/src/sandbox/ambient-types.ts`. Regenerate it instead of
+editing `.d.ts` copies. Add model examples under `samples/`, use the ambient
+globals, and assign the final solid to the predeclared `result`.
 
-The default Viewer entry explicitly composes `@manifold3d/viewer/xr`. The
-`@manifold3d/viewer/flat` subpath and flat Vite entry use the same Viewer shell
-without importing or enabling the optional immersive implementation.
+## Plugin configuration
 
-The private `apps/copilot-extension` workspace produces one self-contained
-Copilot CLI discovery file and is intentionally excluded from the public MCP
-tarball. Its Canvas API and extension-only framing exception are experimental;
-review the security and manual host verification notes in
-`apps/copilot-extension/README.md` before changing that composition.
+The MCP plugin shares `.claude-plugin/plugin.json` and `.mcp.json` between
+Copilot and Claude. Its executable is relative to `${CLAUDE_PLUGIN_ROOT}`,
+which both target clients expand. The configuration has no host-only
+`type: "local"` or `tools` fields.
 
-## Adding a sample
+Executable location and working directory are different concerns. Copilot
+starts plugin MCP servers in the installed plugin directory; Claude can use the
+workspace directory. Prefer inline code in plugin tools. Explicitly set
+`MANIFOLD_MCP_SCRIPT_ROOTS` to authorize other file roots; never derive an
+authorization root by guessing a parent directory. Standalone MCP inherits its
+caller's working directory.
 
-1. Create a new `.ts` file in `samples/` following the existing naming
-   convention (`NN-descriptive-name.ts`).
-2. Use the ambient types from `samples/manifold-sandbox.d.ts`.
-3. Assign the final `Manifold` to a variable named `result`.
+The native Extension has a separate manifest, distinct skill name and no MCP
+declaration. The GitHub marketplace lists both plugins; the Claude marketplace
+lists only MCP.
 
-## Updating sandbox types
+## Version and release
 
-If you change the sandbox API surface, regenerate the ambient declarations:
+The root private `package.json` version is the product version. The build
+generates plugin/catalog versions and embeds it in the MCP runtime. Both
+application workspaces are private.
 
-```bash
-npm run build:sandbox-types
-```
+1. Update the root product version when shipped behavior or content changes.
+2. Run `npm run build:plugins` and include source, lockfile, metadata and generated
+   plugin changes in the same PR.
+3. Merge through the normal review process. Do not use a post-merge bot to
+   patch missing generated output into main.
+4. Tag that merged commit with the matching `v<version>`.
 
-This updates `samples/manifold-sandbox.d.ts` and
-`plugin/skills/use-manifold/references/manifold-sandbox.d.ts`.
+The release workflow uploads the two already-committed `.mjs` files. It does not
+rebuild a different artifact, publish npm packages or update a distribution
+branch. Marketplace installs use Git plugin directories, not release asset URLs.
+Runtime dependencies must be embedded; the Copilot SDK alone remains external
+for the Extension host.
 
-## Branch and PR workflow
-
-1. Branch from `main`.
-2. Make your changes and ensure all checks pass:
-
-   ```bash
-   npm run format:check && npm run lint && npm run typecheck && npm test
-   ```
-
-3. Open a pull request. Squash merge only; all CI checks must pass.
-
-## Releasing / Publishing
-
-The public workspace package (`packages/manifold3d-mcp/package.json`), plugin
-manifests, and `plugin/.mcp.json` range move in lockstep. Private internal
-workspaces stay at `0.0.0-private` and are never published. Use this semver
-convention:
-
-- Patch: bug fixes only, with no MCP tool additions or behavior changes. The
-  plugin launches `@zhicwan/manifold3d-mcp@1.0.x`, so compatible patch releases
-  are picked up automatically.
-- Minor: any new or changed MCP tool. Update the skill docs, bump all package
-  and plugin manifest versions, and raise the `plugin/.mcp.json` range in the
-  same change.
-- Major: breaking changes.
-
-Release steps (works with `main` branch protection):
-
-1. Create a release branch and bump the version **without** tagging. The npm
-   public workspace's `version` lifecycle script
-   (`scripts/sync-versions.mjs`) propagates the new version to every
-   plugin/marketplace manifest and repins the `plugin/.mcp.json` `@x.y.x`
-   range, staging them:
-
-   ```bash
-   git checkout -b release/v1.0.1
-   npm version patch --workspace @zhicwan/manifold3d-mcp --no-git-tag-version
-   git commit -am "release: v1.0.1"
-   git push -u origin release/v1.0.1
-   ```
-
-2. Open a PR and merge it (CI runs `npm run check:sync`, which now passes
-   because every manifest moved in lockstep).
-
-3. Tag the **merged** commit on `main` and push the tag — this triggers the
-   publish workflow:
-
-   ```bash
-   git checkout main && git pull
-   git tag v1.0.1
-   git push origin v1.0.1
-   ```
-
-`.github/workflows/cd.yml` then verifies the tag matches
-`packages/manifold3d-mcp/package.json`, runs `check:sync`, and publishes that
-workspace through npm OIDC Trusted Publishing (provenance is generated
-automatically; no token is used).
-
-> Do not `git push --follow-tags` straight to `main` — branch protection
-> rejects the direct push, which can leave the tag pushed without the version
-> commit on `main`.
-
-### First publish (one-time bootstrap)
-
-npm cannot register a Trusted Publisher for a package that does not exist yet,
-so the **first** publish must be done manually by a maintainer:
-
-```bash
-npm publish --workspace @zhicwan/manifold3d-mcp
-```
-
-Then register this repository and the `cd.yml` workflow as a Trusted Publisher
-on the package access page so all later releases publish via OIDC:
-https://www.npmjs.com/package/@zhicwan/manifold3d-mcp/access
-
-Note: this first manual publish does **not** carry OIDC provenance; every
-CI-published release afterwards does.
-
-CI runs `npm run check:sync` (`scripts/check-sync.mjs`) to prevent version drift
-and ensure the skill's documented tools match the MCP server's registered tools.
-
-### Consuming the published package
-
-The plugin's `plugin/.mcp.json` launches `@zhicwan/manifold3d-mcp@1.0.x`, so
-`npx` resolves the latest in-range **patch** on every server start. Two
-implications for users:
-
-- A network round-trip to the npm registry happens on each launch; if the
-  registry is unreachable and no compatible version is cached, startup fails.
-- A new **major** (e.g. `2.0.0`) is intentionally **not** auto-pulled — users
-  must update/reinstall the plugin (which raises the range) to move major
-  versions.
+Previously published npm versions remain available but no longer receive new
+releases. Migration is an explicit plugin update/configuration change, never
+an automatic uninstall or a hidden second MCP server.

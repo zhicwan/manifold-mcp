@@ -23,8 +23,7 @@
     "noImplicitOverride": true,
     "types": ["react", "react-dom", "webxr"],
     "paths": {
-      "@/*": ["./src/*"],
-      "@manifold3d/protocol/*.js": ["../protocol/src/*.ts"]
+      "@/*": ["./src/*"]
     }
   },
   "include": [

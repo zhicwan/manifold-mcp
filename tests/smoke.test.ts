@@ -12,7 +12,7 @@ import { parse as parseYaml } from 'yaml';
 import { createAnnotationsMessage } from '../packages/protocol/src/wire/annotations.js';
 
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..');
-const entry = join(repoRoot, 'packages', 'manifold3d-mcp', 'dist', 'server', 'index.js');
+const entry = join(repoRoot, 'apps', 'manifold3d-mcp', 'dist', 'manifold.mjs');
 const smokeScriptRoot = join(repoRoot, '.manifold3d-mcp-smoke-files');
 const skipUnlessBuilt = !existsSync(entry);
 
@@ -170,6 +170,29 @@ class McpHarness {
     child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', method, params })}\n`);
   }
 
+  pauseResponses(): void {
+    this.child?.stdout.pause();
+  }
+
+  resumeResponses(): void {
+    this.child?.stdout.resume();
+  }
+
+  finishInput(): Promise<{ code: number | null; signal: NodeJS.Signals | null }> {
+    const child = this.child;
+    if (!child) {
+      throw new Error('MCP server not started');
+    }
+    return new Promise((resolveExit, reject) => {
+      const timer = setTimeout(() => reject(new Error(`MCP did not exit after EOF.\n${this.stderr}`)), 5_000);
+      child.once('exit', (code, signal) => {
+        clearTimeout(timer);
+        resolveExit({ code, signal });
+      });
+      child.stdin.end();
+    });
+  }
+
   async callTool(name: string, args: Record<string, unknown> = {}): Promise<ToolResult> {
     return this.call<ToolResult>('tools/call', { name, arguments: args });
   }
@@ -295,9 +318,7 @@ describe.skipIf(skipUnlessBuilt)('MCP smoke tests', () => {
   });
 
   it('reports the package version', async () => {
-    const manifest: unknown = JSON.parse(
-      await readFile(join(repoRoot, 'packages', 'manifold3d-mcp', 'package.json'), 'utf8'),
-    );
+    const manifest: unknown = JSON.parse(await readFile(join(repoRoot, 'package.json'), 'utf8'));
     expect(manifest).toEqual(expect.objectContaining({ version: initializeResult.serverInfo.version }));
     expect(initializeResult.serverInfo.name).toBe('manifold3d-mcp');
   });
@@ -881,4 +902,19 @@ result = Manifold.cube(size);
       await closeWebSocket(annotationSocket);
     }
   }, 35_000);
+
+  it('drains accepted responses and the worker before exiting on stdin EOF', async () => {
+    const filePath = join(smokeScriptRoot, 'eof.ts');
+    await writeFile(filePath, 'result = Manifold.cube(1);\n');
+    harness.pauseResponses();
+    const validated = harness.callTool('validate_script', { filePath });
+    const listed = Promise.all(Array.from({ length: 128 }, () => harness.call<ToolsListResult>('tools/list', {})));
+    const exited = harness.finishInput();
+    await sleep(100);
+    harness.resumeResponses();
+    const [result, lists, outcome] = await Promise.all([validated, listed, exited]);
+    expect(result.isError).toBe(false);
+    expect(lists.every(list => list.tools.length === 4)).toBe(true);
+    expect(outcome).toEqual({ code: 0, signal: null });
+  });
 });

@@ -7,9 +7,17 @@
     "dist"
   ],
   "exports": {
-    "./*.js": {
-      "types": "./dist/*.d.ts",
-      "default": "./dist/*.js"
+    "./wire/model.js": {
+      "types": "./dist/wire/model.d.ts",
+      "default": "./dist/wire/model.js"
+    },
+    "./wire/annotations.js": {
+      "types": "./dist/wire/annotations.d.ts",
+      "default": "./dist/wire/annotations.js"
+    },
+    "./wire/host-actions.js": {
+      "types": "./dist/wire/host-actions.d.ts",
+      "default": "./dist/wire/host-actions.js"
     }
   },
   "scripts": {

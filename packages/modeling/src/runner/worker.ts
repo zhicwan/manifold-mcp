@@ -105,7 +105,7 @@ async function bootstrap(options: ModelingWorkerOptions): Promise<void> {
   scrubSandboxGlobals();
 }
 
-async function handleRun(req: RunRequest): Promise<void> {
+function handleRun(req: RunRequest): void {
   const t0 = performance.now();
   const stageOpts = { suppressSnippet: req.suppressSnippet === true };
 
@@ -199,7 +199,7 @@ async function handleRun(req: RunRequest): Promise<void> {
     resultValue = userFn(TrackedManifold, TrackedCrossSection, TrackedMesh, sandboxConsole, undefined);
   } catch (e: unknown) {
     const err = e as Error;
-    const sourceLocation = await runtimeSourceLocation(err.stack, compiled.sourceMap);
+    const sourceLocation = runtimeSourceLocation(err.stack, compiled.sourceMap);
     const snippet = stageOpts.suppressSnippet ? undefined : runtimeErrorSnippet(req.code, sourceLocation, err.stack);
     addError(report, {
       stage: 'runtime',
@@ -311,7 +311,9 @@ export async function startModelingWorker(options: ModelingWorkerOptions = {}): 
     // first runOnce() on this signal.
     port.postMessage({ ready: true, threadId });
     port.once('message', req => {
-      handleRun(req as RunRequest).catch((err: unknown) => {
+      try {
+        handleRun(req as RunRequest);
+      } catch (err) {
         const msg = err instanceof Error ? (err.stack ?? err.message) : String(err);
         const report = emptyReport('runtime');
         addError(report, {
@@ -321,7 +323,7 @@ export async function startModelingWorker(options: ModelingWorkerOptions = {}): 
           message: `Worker crashed during run: ${msg}`,
         });
         port.postMessage({ report } satisfies RunResult);
-      });
+      }
     });
   } catch (err: unknown) {
     // Bootstrap failed (e.g. WASM init blew up). Surface a single crash

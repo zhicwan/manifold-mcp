@@ -1,7 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { WebSocket } from 'ws';
+import { once } from 'node:events';
+import { createConnection } from 'node:net';
+import { Server as HttpServer } from 'node:http';
+import { WebSocket, WebSocketServer } from 'ws';
 
 import { createAnnotationsMessage, type WireAnnotation } from '../packages/protocol/src/wire/annotations.js';
 import { createHostActionInvocation } from '../packages/protocol/src/wire/host-actions.js';
@@ -32,6 +35,65 @@ describe('Viewer Host rooms', () => {
 
   afterEach(async () => {
     await host.close();
+  });
+
+  it('closes incomplete HTTP requests and WS clients with one shared close result', async () => {
+    const room = host.createRoom();
+    const client = await openRoom(room);
+    const socket = createConnection({ host: '127.0.0.1', port: Number(new URL(host.origin).port) });
+    let deadline: ReturnType<typeof setTimeout> | undefined;
+    try {
+      await once(socket, 'connect');
+      socket.write(`GET ${new URL(room.url).pathname} HTTP/1.1\r\nHost: ${new URL(host.origin).host}\r\n`);
+      await fetch(room.url);
+      const httpClosed = once(socket, 'close');
+      const wsClosed = once(client.socket, 'close');
+      const closing = host.close();
+      expect(host.close()).toBe(closing);
+      expect(() => host.createRoom()).toThrow(/closed/);
+      await Promise.race([
+        Promise.all([closing, httpClosed, wsClosed]),
+        new Promise((_, reject) => {
+          deadline = setTimeout(() => reject(new Error('Host close waited for an incomplete HTTP request')), 1_000);
+        }),
+      ]);
+      expect(host.close()).toBe(closing);
+      expect(socket.destroyed).toBe(true);
+      expect(client.socket.readyState).toBe(WebSocket.CLOSED);
+    } finally {
+      clearTimeout(deadline);
+      socket.destroy();
+      client.socket.terminate();
+    }
+  });
+
+  it('aggregates HTTP and WebSocket cleanup failures and preserves the rejected close promise', async () => {
+    const failedHost = await startViewerHost({
+      assetRoot: join(repoRoot, 'packages', 'viewer'),
+      preferredPort: 0,
+    });
+    const httpError = new Error('HTTP cleanup failed');
+    const wsError = new Error('WS cleanup failed');
+    const realHttpClose = HttpServer.prototype.close;
+    const realWsClose = WebSocketServer.prototype.close;
+    const httpClose = vi.spyOn(HttpServer.prototype, 'close').mockImplementation(function (this: HttpServer, callback) {
+      return realHttpClose.call(this, () => callback?.(httpError));
+    });
+    const wsClose = vi.spyOn(WebSocketServer.prototype, 'close').mockImplementation(function (
+      this: WebSocketServer,
+      callback,
+    ) {
+      return realWsClose.call(this, () => callback?.(wsError));
+    });
+    try {
+      const closing = failedHost.close();
+      expect(failedHost.close()).toBe(closing);
+      await expect(closing).rejects.toMatchObject({ errors: [httpError, wsError] });
+      expect(failedHost.close()).toBe(closing);
+    } finally {
+      httpClose.mockRestore();
+      wsClose.mockRestore();
+    }
   });
 
   it('authenticates HTTP and WS room access and sends security headers', async () => {

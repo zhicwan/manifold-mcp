@@ -1,6 +1,30 @@
 import eslint from '@eslint/js';
 import tseslint from 'typescript-eslint';
 import prettier from 'eslint-config-prettier';
+import { builtinModules } from 'node:module';
+
+const appImports = [
+  '@zhicwan/manifold3d-mcp',
+  '@zhicwan/manifold3d-mcp/**',
+  '@manifold3d/copilot-extension',
+  '@manifold3d/copilot-extension/**',
+  '**/apps/**',
+  '**/manifold3d-mcp/**',
+  '**/copilot-extension/**',
+];
+const sdkImports = ['@modelcontextprotocol/**', '@github/copilot-sdk', '@github/copilot-sdk/**'];
+const nodeImports = ['node:*', ...builtinModules];
+const viewerImports = [
+  ...appImports,
+  ...sdkImports,
+  ...nodeImports,
+  '@manifold3d/modeling',
+  '@manifold3d/modeling/**',
+  '**/modeling/**',
+  '@manifold3d/viewer-host',
+  '@manifold3d/viewer-host/**',
+  '**/viewer-host/**',
+];
 
 export default tseslint.config(
   eslint.configs.recommended,
@@ -15,10 +39,10 @@ export default tseslint.config(
             'vitest.config.ts',
             'scripts/*.mjs',
             'scripts/*.ts',
-            'scripts/extension-spike/*.mjs',
+            'tests/*.mjs',
             'apps/copilot-extension/scripts/*.mjs',
+            'apps/manifold3d-mcp/scripts/*.mjs',
             'packages/viewer/scripts/*.mjs',
-            'plugin/bin/*.mjs',
           ],
           // Safety net: in some IDE contexts projectService may briefly
           // route additional files (e.g. tests) through the default
@@ -52,6 +76,100 @@ export default tseslint.config(
     },
   },
   {
+    files: ['packages/protocol/src/**/*.ts'],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          patterns: [
+            {
+              group: [
+                ...appImports,
+                ...sdkImports,
+                ...nodeImports,
+                '@manifold3d/**',
+                'react',
+                'react/**',
+                'three',
+                'three/**',
+                '**/modeling/**',
+                '**/viewer/**',
+                '**/viewer-host/**',
+              ],
+              message: 'Protocol contains transport-neutral data contracts only.',
+            },
+          ],
+        },
+      ],
+    },
+  },
+  {
+    files: ['packages/modeling/src/**/*.ts'],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          patterns: [
+            {
+              group: [
+                ...appImports,
+                ...sdkImports,
+                '@manifold3d/viewer',
+                '@manifold3d/viewer/**',
+                '**/viewer/**',
+                '@manifold3d/viewer-host',
+                '@manifold3d/viewer-host/**',
+                '**/viewer-host/**',
+              ],
+              message: 'Modeling must not depend on host adapters or the browser Viewer.',
+            },
+          ],
+        },
+      ],
+    },
+  },
+  {
+    files: ['packages/viewer-host/src/**/*.ts'],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          patterns: [
+            {
+              group: [
+                ...appImports,
+                ...sdkImports,
+                '@manifold3d/modeling',
+                '@manifold3d/modeling/**',
+                '**/modeling/**',
+                '@manifold3d/viewer',
+                '@manifold3d/viewer/**',
+                '**/viewer/**',
+              ],
+              message: 'Viewer Host owns transport, not modeling or browser implementation.',
+            },
+          ],
+        },
+      ],
+    },
+  },
+  {
+    files: ['packages/viewer/src/**/*.{ts,tsx}'],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          patterns: [
+            {
+              group: viewerImports,
+              message: 'The browser Viewer consumes protocol, not Node or host adapters.',
+            },
+          ],
+        },
+      ],
+    },
+  },
+  {
     files: ['packages/viewer/src/**/*.{ts,tsx}'],
     ignores: ['packages/viewer/src/xr/**', 'packages/viewer/src/main.tsx'],
     rules: {
@@ -59,6 +177,10 @@ export default tseslint.config(
         'error',
         {
           patterns: [
+            {
+              group: viewerImports,
+              message: 'The browser Viewer consumes protocol, not Node or host adapters.',
+            },
             {
               group: ['@/xr', '@/xr/**', '**/xr', '**/xr/**'],
               message:
@@ -97,14 +219,13 @@ export default tseslint.config(
     ignores: [
       'build/',
       '**/dist/',
+      'apps/*/build/',
+      'plugins/',
       'node_modules/',
-      '.pack-smoke/',
       '.test-tmp/',
       'apps/copilot-extension/.verify-empty/',
       'apps/copilot-extension/.test-workspace/',
-      'plugin/skills/use-manifold/references/manifold-sandbox.d.ts',
-      '.github/skills/forge-workspace/',
-      'plugin/skills/use-manifold/evals/',
+      'skills/shared/references/manifold-sandbox.d.ts',
     ],
   },
 );

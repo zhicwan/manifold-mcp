@@ -8,7 +8,7 @@
  * orchestration and so unit tests can exercise the source-map math
  * without spinning up a real Worker.
  */
-import { SourceMapConsumer } from 'source-map';
+import { originalPositionFor, TraceMap } from '@jridgewell/trace-mapping';
 
 import { buildCodeFrame, type Issue } from '../validation/report.js';
 
@@ -23,10 +23,10 @@ interface SourceLocation {
  * doesn't include a usable frame; falls back to the emitted-JS line
  * when the source map is missing or has no entry for the frame.
  */
-export async function runtimeSourceLocation(
+export function runtimeSourceLocation(
   stack: string | undefined,
   sourceMapText: string | undefined,
-): Promise<SourceLocation | undefined> {
+): SourceLocation | undefined {
   const match = stack?.match(/<anonymous>:(\d+):(\d+)/);
   if (!match) {
     return undefined;
@@ -43,14 +43,12 @@ export async function runtimeSourceLocation(
   }
 
   if (sourceMapText !== undefined) {
-    const consumer = await new SourceMapConsumer(sourceMapText);
-    try {
-      const original = consumer.originalPositionFor({ line: emittedLine, column: Math.max(0, functionCol - 1) });
-      if (original.line !== null) {
-        return { line: original.line, col: (original.column ?? 0) + 1 };
-      }
-    } finally {
-      consumer.destroy();
+    const original = originalPositionFor(new TraceMap(sourceMapText), {
+      line: emittedLine,
+      column: Math.max(0, functionCol - 1),
+    });
+    if (original.line !== null) {
+      return { line: original.line, col: original.column + 1 };
     }
   }
 

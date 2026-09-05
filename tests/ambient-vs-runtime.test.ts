@@ -18,7 +18,9 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { describe, expect, it } from 'vitest';
-import Module from 'manifold-3d';
+import Module, { type CrossSection, type Manifold, type Mat3, type Mat4 } from 'manifold-3d';
+
+import { compileSnippetTypeScript } from '../packages/modeling/src/compiler/typescript-compiler.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, '..');
@@ -275,5 +277,70 @@ describe('sandbox ambient declarations vs. live manifold-3d runtime', () => {
     } finally {
       cyl.delete();
     }
+  });
+
+  describe.each([
+    { name: 'identity', x: 0, y: 0, z: 0 },
+    { name: 'column-major translation', x: 5, y: -7, z: 11 },
+  ])('$name matrices', ({ x, y, z }) => {
+    it('typechecks Mat3 and preserves the expected 2D geometry at runtime', async () => {
+      const matrix: Mat3 = [1, 0, 0, 0, 1, 0, x, y, 1];
+      const compiled = compileSnippetTypeScript(`
+const matrix: Mat3 = [${matrix.join(', ')}];
+result = CrossSection.square([2, 3], true).transform(matrix).extrude(4);
+`);
+      expect(compiled.issues).toEqual([]);
+      expect(compiled.ok).toBe(true);
+
+      const wasm = await initWasm();
+      const original = (wasm.CrossSection as typeof CrossSection).square([2, 3], true);
+      const transformed = original.transform(matrix);
+      try {
+        expect(transformed.area()).toBeCloseTo(6, 5);
+        expect(transformed.bounds()).toEqual({
+          min: [-1 + x, -1.5 + y],
+          max: [1 + x, 1.5 + y],
+        });
+        expect(transformed.toPolygons()).toEqual(
+          original.toPolygons().map(polygon => polygon.map(([px, py]) => [px + x, py + y])),
+        );
+      } finally {
+        transformed.delete();
+        original.delete();
+      }
+    });
+
+    it('typechecks Mat4 and preserves the expected 3D geometry at runtime', async () => {
+      const matrix: Mat4 = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, x, y, z, 1];
+      const compiled = compileSnippetTypeScript(`
+const matrix: Mat4 = [${matrix.join(', ')}];
+result = Manifold.cube([2, 3, 4], true).transform(matrix);
+`);
+      expect(compiled.issues).toEqual([]);
+      expect(compiled.ok).toBe(true);
+
+      const wasm = await initWasm();
+      const original = (wasm.Manifold as typeof Manifold).cube([2, 3, 4], true);
+      const transformed = original.transform(matrix);
+      try {
+        expect(transformed.volume()).toBeCloseTo(24, 5);
+        expect(transformed.boundingBox()).toEqual({
+          min: [-1 + x, -1.5 + y, -2 + z],
+          max: [1 + x, 1.5 + y, 2 + z],
+        });
+        const originalMesh = original.getMesh();
+        const transformedMesh = transformed.getMesh();
+        expect(transformedMesh.triVerts).toEqual(originalMesh.triVerts);
+        expect(Array.from(transformedMesh.vertProperties)).toEqual(
+          Array.from(originalMesh.vertProperties, (value, index) => {
+            const offset = index % 3 === 0 ? x : index % 3 === 1 ? y : z;
+            return value + offset;
+          }),
+        );
+      } finally {
+        transformed.delete();
+        original.delete();
+      }
+    });
   });
 });

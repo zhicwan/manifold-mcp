@@ -5,7 +5,7 @@
 // to put literal `..` segments and percent-encoded bytes into the request
 // line. The server defends by:
 //   * outright rejecting any URL containing `%` (no decoding attempted), and
-//   * resolving the requested path against `viewer-host/dist/public/` and rejecting any
+//   * resolving the requested path against the configured asset root and rejecting any
 //     result whose `relative()` walk leaves the public root.
 // We assert all those branches end with a 4xx and never with package.json.
 
@@ -14,21 +14,14 @@ import { existsSync, readdirSync, statSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { createConnection } from 'node:net';
+import type * as PreviewModuleSource from '../../apps/manifold3d-mcp/src/server/preview/preview-server.js';
 
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
-const distPreview = join(repoRoot, 'packages', 'viewer-host', 'dist', 'preview', 'preview-server.js');
-const distPublic = join(repoRoot, 'packages', 'viewer-host', 'dist', 'public');
+const distPreview = join(repoRoot, 'apps', 'manifold3d-mcp', 'build', 'server', 'preview', 'preview-server.js');
+const distPublic = join(repoRoot, 'apps', 'manifold3d-mcp', 'build', 'viewer');
 const skipUnlessBuilt = !existsSync(distPreview) || !existsSync(join(distPublic, 'index.html'));
 
-interface PreviewModule {
-  startPreviewServer: (
-    preferredPort?: number,
-    host?: string,
-  ) => Promise<{
-    url: string;
-    close(): Promise<void>;
-  }>;
-}
+type PreviewModule = typeof PreviewModuleSource;
 
 // Find a non-index.html static asset so we can exercise the asset path
 // without depending on a specific file name. Returns null when the public
@@ -96,7 +89,7 @@ describe.skipIf(skipUnlessBuilt)('SEC-4: static asset path traversal is blocked'
 
   beforeAll(async () => {
     const mod = (await import(pathToFileURL(distPreview).href)) as PreviewModule;
-    const handle = await mod.startPreviewServer(47621, '127.0.0.1');
+    const handle = await mod.startPreviewServer({ preferredPort: 47621, assetRoot: distPublic });
     const roomUrl = new URL(handle.url);
     port = Number(roomUrl.port);
     roomPath = roomUrl.pathname;

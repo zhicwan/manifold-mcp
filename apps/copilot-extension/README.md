@@ -23,7 +23,8 @@ npm run verify:extension
 
 `verify:extension` copies the artifact into an otherwise empty directory and
 runs `node extension.mjs --self-test` under Node's filesystem permission model.
-The self-test initializes embedded WASM, executes a cube, serves and hashes
+The self-test initializes embedded WASM, executes a cube and a failing snippet
+with source-line mapping, serves and hashes
 every embedded Viewer asset, checks two isolated rooms and action idempotency,
 and closes the worker, rooms, and host. The verifier also asserts that `dist/`
 contains only `extension.mjs`, inspects imports/chunks, and reports raw/gzip and
@@ -31,7 +32,26 @@ embedded resource sizes. Production `session.shutdown`, join-race, pending-send,
 and signal behavior is covered by the mock-SDK integration tests rather than
 claimed by this low-level self-test.
 
-## Local installation
+## Installation
+
+The normal distribution is the self-contained `manifold-extension` plugin:
+
+```sh
+copilot plugin marketplace add zhicwan/manifold3d-mcp
+copilot plugin install manifold-extension@manifold3d-mcp
+```
+
+It contains the single runtime and its Canvas skill. No MCP server or npm
+installation is added by this plugin. For local development, build with
+`npm run build:plugins` and load `plugins/manifold-extension` using the host's
+`--plugin-dir` support.
+
+SDK hosts must explicitly opt into the surfaces they support on session
+creation: `requestExtensions` and `requestCanvasRenderer`. Loading installed
+plugin configuration also requires `enableConfigDiscovery`; an SDK host can
+instead supply trusted `pluginDirectories` explicitly. These options default off.
+
+### Standalone discovery file for development
 
 ```bash
 npm run extension:install
@@ -44,6 +64,8 @@ The install script copies the built file to
 rebuilding, then ask it to open the **Manifold 3D Viewer** Canvas. Canvas panel
 rendering remains a manual host proof unless the host is actually exercised;
 the Node self-test does not claim to render the host iframe.
+Do not enable this user-scoped copy and the plugin copy together: they register
+the same tools.
 
 ## Tools and captures
 
@@ -60,13 +82,20 @@ Each Viewer room exposes three host actions:
 - `attach-location-selection` in `selection-gesture`
 
 Batch actions require explicit `annotationIds` and input
-`{ "batchId": "<safe-id>" }`. They push exactly one `extension_context` pill
-containing a bounded version 2 static snapshot with mode `annotation-batch`,
-the model version, annotation revision, batch id, selected geometry, and notes.
-`fix-annotation-batch` pushes that pill before enqueueing
-`Revise the current manifold-3d model using the attached annotation batch.` and
-reports accepted, running, and terminal status through the Viewer Host request.
-Retransmitting the same request id does not push or enqueue twice.
+`{ "batchId": "<safe-id>" }`. Both capture a bounded version 2 static snapshot
+with mode `annotation-batch`, the model version, annotation revision, batch id,
+selected geometry, and notes. `attach-annotation-batch` adds exactly one
+`extension_context` composer pill and does not send a message.
+`fix-annotation-batch` never adds a pill: it sends a clear revision request and
+the complete serialized snapshot in the actual message `prompt`, with a readable
+`displayPrompt` and `mode: "enqueue"`. It reports accepted, running, and terminal
+status through the Viewer Host request. Success means the SDK accepted the
+enqueue, not that the agent completed the model changes.
+
+Retransmitting the same request id does not attach or enqueue twice. A failed
+send reports a failed action so the Viewer can restore the batch for a manual
+retry, without leaving a composer pill behind. There is no automatic retry or
+exactly-once guarantee if a network acknowledgement is lost.
 
 `attach-location-selection` requires exactly one point or region annotation
 whose note is empty. Its single version 2 pill uses mode `location-selection`,
@@ -96,5 +125,6 @@ Normal `frameAncestors` entries must be exact HTTP(S) origins; wildcard
 hostnames are rejected. The MCP/default ViewerHost policy remains
 `frame-ancestors 'none'`.
 
-This workspace is private and is not included by the public
-`@zhicwan/manifold3d-mcp` package's `files` allow-list or pack staging script.
+Both application workspaces are private. The generated MCP and Extension
+plugins are distributed separately from this repository, with bundled dependency
+license notices retained in each runtime.

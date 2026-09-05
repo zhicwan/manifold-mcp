@@ -18,11 +18,11 @@ import { WebSocket } from 'ws';
 import { createAnnotationsMessage } from '../packages/protocol/src/wire/annotations.js';
 import type { ViewerModelFrame } from '../packages/protocol/src/wire/model.js';
 
-import type * as PreviewModuleNs from '../packages/viewer-host/src/preview/preview-server.js';
+import type * as PreviewModuleNs from '../apps/manifold3d-mcp/src/server/preview/preview-server.js';
 
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..');
-const distPreview = join(repoRoot, 'packages', 'viewer-host', 'dist', 'preview', 'preview-server.js');
-const distPublic = join(repoRoot, 'packages', 'viewer-host', 'dist', 'public', 'index.html');
+const distPreview = join(repoRoot, 'apps', 'manifold3d-mcp', 'build', 'server', 'preview', 'preview-server.js');
+const distPublic = join(repoRoot, 'apps', 'manifold3d-mcp', 'build', 'viewer', 'index.html');
 const skipUnlessBuilt = !existsSync(distPreview) || !existsSync(distPublic);
 
 type PreviewModule = typeof PreviewModuleNs;
@@ -127,7 +127,7 @@ function syntheticModel(): ViewerModelFrame {
 describe.skipIf(skipUnlessBuilt)('preview server: multi-tab annotation merge', () => {
   beforeAll(async () => {
     previewModule = (await import(pathToFileURL(distPreview).href)) as PreviewModule;
-    handle = await previewModule.startPreviewServer(48171);
+    handle = await previewModule.startPreviewServer({ preferredPort: 48171, assetRoot: dirname(distPublic) });
   }, 15_000);
 
   afterAll(async () => {

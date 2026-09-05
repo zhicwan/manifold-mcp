@@ -1,16 +1,13 @@
 node_modules/
 dist/
+apps/*/build/
 *.log
 .DS_Store
 .vscode/*
 .idea/
 test-results.junit.xml
 .spike-output/
-.pack-smoke/
 .test-tmp/
 .manifold3d-mcp-*/
 apps/copilot-extension/.test-workspace/
 apps/copilot-extension/.verify-empty/
-packages/manifold3d-mcp/README.md
-packages/manifold3d-mcp/LICENSE
-packages/manifold3d-mcp/NOTICE

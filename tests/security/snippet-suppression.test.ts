@@ -17,7 +17,7 @@ import { createInterface } from 'node:readline';
 import { parse as parseYaml } from 'yaml';
 
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
-const entry = join(repoRoot, 'packages', 'manifold3d-mcp', 'dist', 'server', 'index.js');
+const entry = join(repoRoot, 'apps', 'manifold3d-mcp', 'dist', 'manifold.mjs');
 const skipUnlessBuilt = !existsSync(entry);
 
 interface ToolResult {

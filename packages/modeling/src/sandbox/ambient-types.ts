@@ -7,8 +7,14 @@
 export const sandboxAmbientDeclarations = String.raw`
 type Vec2 = [number, number];
 type Vec3 = [number, number, number];
-type Mat3 = [number, number, number, number, number, number];
+/** 3x3 matrix stored in column-major order. */
+type Mat3 = [number, number, number, number, number, number, number, number, number];
+/** 4x4 matrix stored in column-major order. */
 type Mat4 = [
+  number,
+  number,
+  number,
+  number,
   number,
   number,
   number,

@@ -7,7 +7,7 @@ import {
   embeddedManifoldWasmBase64,
   embeddedTypeScriptLibBase64,
   embeddedViewerAssets,
-} from 'virtual:manifold-extension-resources';
+} from 'virtual:manifold-resources';
 
 import { startCopilotExtension } from './composition.js';
 import { runExtensionSelfTest } from './self-test.js';

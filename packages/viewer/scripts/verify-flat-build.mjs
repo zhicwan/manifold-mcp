@@ -4,7 +4,7 @@ import process from 'node:process';
 
 const viewerDirectory = resolve(import.meta.dirname, '..');
 const flatDirectory = resolve(viewerDirectory, 'dist/flat');
-const defaultDirectory = resolve(viewerDirectory, '../viewer-host/dist/public');
+const defaultDirectory = resolve(viewerDirectory, '../../apps/manifold3d-mcp/build/viewer');
 const forbiddenImplementationMarkers = [
   '/packages/viewer/src/xr/',
   'immersive-vr',

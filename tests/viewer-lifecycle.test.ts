@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { Vector2 } from 'three';
 
 import { Viewer } from '../packages/viewer/src/scene/viewer.js';
 import { createViewerGenerationDisposer } from '../packages/viewer/src/viewer-runtime-lifecycle.js';
@@ -114,6 +115,50 @@ describe('Viewer render lifecycle', () => {
     expect(failure).toBeInstanceOf(AggregateError);
     expect((failure as AggregateError).errors).toHaveLength(3);
     expect(completed).toEqual(['before', 'contributions', 'after']);
+  });
+
+  it.each([1, 2])('only resizes and invalidates a stationary viewport once at DPR %i', pixelRatio => {
+    const canvas = { clientWidth: 640, clientHeight: 480, width: 300, height: 150 };
+    const logicalSize = new Vector2(300, 150);
+    const setSize = vi.fn((width: number, height: number) => {
+      logicalSize.set(width, height);
+      canvas.width = Math.floor(width * pixelRatio);
+      canvas.height = Math.floor(height * pixelRatio);
+    });
+    const updateLayout = vi.fn();
+    const camera = { aspect: 1, updateProjectionMatrix: vi.fn() };
+    const viewer = Object.assign(Object.create(Viewer.prototype) as { resize(): void }, {
+      canvas,
+      rendererSize: new Vector2(),
+      renderer: { getSize: (target: Vector2) => target.copy(logicalSize), setSize },
+      viewCube: { updateLayout },
+      camera,
+      needsRender: false,
+    });
+
+    viewer.resize();
+    expect(viewer.needsRender).toBe(true);
+    expect(camera.aspect).toBe(640 / 480);
+    viewer.needsRender = false;
+    for (let frame = 0; frame < 120; frame++) {
+      viewer.resize();
+      expect(viewer.needsRender).toBe(false);
+    }
+    expect(setSize).toHaveBeenCalledExactlyOnceWith(640, 480, false);
+    expect(updateLayout).toHaveBeenCalledOnce();
+    expect(camera.updateProjectionMatrix).toHaveBeenCalledOnce();
+
+    canvas.clientWidth = 800;
+    canvas.clientHeight = 600;
+    viewer.resize();
+    expect(setSize).toHaveBeenLastCalledWith(800, 600, false);
+    expect(viewer.needsRender).toBe(true);
+    viewer.needsRender = false;
+    viewer.resize();
+    expect(setSize).toHaveBeenCalledTimes(2);
+    expect(viewer.needsRender).toBe(false);
+    expect(canvas.width).toBe(800 * pixelRatio);
+    expect(canvas.height).toBe(600 * pixelRatio);
   });
 });
 

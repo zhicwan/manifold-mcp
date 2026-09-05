@@ -14,12 +14,7 @@
     "exactOptionalPropertyTypes": true,
     "noUncheckedIndexedAccess": true,
     "noImplicitOverride": true,
-    "forceConsistentCasingInFileNames": true,
-    "paths": {
-      "@manifold3d/modeling/*.js": ["./packages/modeling/src/*.ts"],
-      "@manifold3d/protocol/*.js": ["./packages/protocol/src/*.ts"],
-      "@manifold3d/viewer-host/*.js": ["./packages/viewer-host/src/*.ts"]
-    }
+    "forceConsistentCasingInFileNames": true
   },
   "files": [],
   "references": [
@@ -33,7 +28,7 @@
       "path": "packages/viewer-host"
     },
     {
-      "path": "packages/manifold3d-mcp"
+      "path": "apps/manifold3d-mcp"
     }
   ]
 }
