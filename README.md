@@ -78,6 +78,9 @@ and two short, host-specific entries into complete `plugins/` directories.
 Those generated directories are committed alongside their sources. Do not edit
 generated files or use cross-plugin symlinks.
 
+For repository changes, start with [AGENTS.md](AGENTS.md). The
+[architecture](docs/architecture.md) and [change guide](docs/change-guide.md)
+explain ownership, design choices and how to choose meaningful evidence.
 See [CONTRIBUTING.md](CONTRIBUTING.md) for the build/release workflow and
 [the Extension README](apps/copilot-extension/README.md) for Canvas integration.
 

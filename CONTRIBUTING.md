@@ -10,20 +10,13 @@ npm run build:plugins
 
 ## Ownership
 
-| Directory                | Responsibility                                            |
-| ------------------------ | --------------------------------------------------------- |
-| `apps/manifold3d-mcp`    | MCP/stdio, browser launch and single-room composition     |
-| `apps/copilot-extension` | Copilot SDK, Canvas and message integration               |
-| `packages/protocol`      | Browser/Node data contracts                               |
-| `packages/modeling`      | Compilation, execution, model state and software capture  |
-| `packages/viewer`        | Scene, annotation UI, exports and optional XR subpath     |
-| `packages/viewer-host`   | HTTP/WS, authenticated rooms and host actions             |
-| `skills`                 | Shared references and two directly authored skill entries |
-| `plugins`                | Generated, self-contained installation directories        |
+Applications compose reusable packages; `skills` is authored content and `plugins`
+is generated installation output. The full ownership map and design rationale
+live in [Architecture](docs/architecture.md).
 
-Applications depend on reusable packages, not the reverse. Consumers use package
-exports rather than cross-package source aliases. XR presentation transforms
-must not affect canonical model geometry or exports.
+Coding agents should start with [AGENTS.md](AGENTS.md) and the applicable local
+guidance. Use [Making a good change](docs/change-guide.md) to identify the owner,
+affected consumers and appropriate behavioral evidence.
 
 ## Build and check
 
