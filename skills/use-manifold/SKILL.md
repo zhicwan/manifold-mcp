@@ -69,9 +69,9 @@ optional `description` shown as the preview title.
 - [`references/cross-section-api.md`](references/cross-section-api.md) —
   2D shapes that you can `extrude`, `revolve`, or use in `levelSet`.
 - [`references/memory-management.md`](references/memory-management.md) —
-  why you usually do not need to call `delete()` here, and when you should.
+  managed cleanup, instance lifetime and allocation pressure.
 - [`references/tips.md`](references/tips.md) — precision,
-  units, rotation pitfalls, copied verbatim from upstream.
+  units and immutable rotations, adapted from upstream.
 - [`references/validation-report.md`](references/validation-report.md) —
   the YAML schema and every error/warning code, with typical fixes.
 - [`references/examples.md`](references/examples.md) —

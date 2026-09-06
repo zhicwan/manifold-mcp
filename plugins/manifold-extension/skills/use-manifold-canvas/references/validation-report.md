@@ -90,12 +90,12 @@ Common TypeScript diagnostics in manifold3d-mcp snippets:
 
 ### Stage `runtime`
 
-| Code            | Meaning                                         | Typical fix                                                                                              |
-| --------------- | ----------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
-| `TIMEOUT`       | Worker exceeded 5 s.                            | Reduce `circularSegments`, simplify a `levelSet`, or remove an O(n²) loop.                               |
-| `OUT_OF_MEMORY` | Worker exceeded the 512 MB hard heap limit.     | Cut intermediate geometry; call `delete()` on Manifolds you no longer need (see `memory-management.md`). |
-| `WORKER_CRASH`  | Worker exited unexpectedly.                     | Treat as a runtime error; check the `message` for context.                                               |
-| `RUNTIME_ERROR` | Your code threw, or geometry inspection failed. | Read the `message` and `snippet` (top of stack).                                                         |
+| Code            | Meaning                                                               | Typical fix                                                                                                                       |
+| --------------- | --------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| `TIMEOUT`       | Worker exceeded 5 s.                                                  | Reduce `circularSegments`, simplify a `levelSet`, or remove an O(n²) loop.                                                        |
+| `OUT_OF_MEMORY` | Worker exhausted available memory or hit its configured memory limit. | Reduce tessellation and intermediate geometry; let the managed registry clean up (see [memory management](memory-management.md)). |
+| `WORKER_CRASH`  | Worker exited unexpectedly.                                           | Treat as a runtime error; check the `message` for context.                                                                        |
+| `RUNTIME_ERROR` | Your code threw, or geometry inspection failed.                       | Read the `message` and `snippet` (top of stack).                                                                                  |
 
 ### Stage `geometry`
 
