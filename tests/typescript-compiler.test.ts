@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { compileSnippetTypeScript } from '../src/server/compiler/typescript-compiler.js';
+import { compileSnippetTypeScript } from '../packages/modeling/src/compiler/typescript-compiler.js';
 
 describe('compileSnippetTypeScript', () => {
   it('emits JavaScript for valid TypeScript snippets with helpers', () => {
@@ -93,6 +93,16 @@ result = Manifold.cube();
       name: 'malformed tuple vector',
       code: 'const size: [number, number, number] = [1, 2]; result = Manifold.cube(size);',
       tsCode: 2322,
+    },
+    {
+      name: 'six-element CrossSection transform matrix',
+      code: 'result = CrossSection.square([2, 3]).transform([1, 0, 0, 1, 0, 0]).extrude(4);',
+      tsCode: 2345,
+    },
+    {
+      name: 'twelve-element Manifold transform matrix',
+      code: 'result = Manifold.cube([2, 3, 4]).transform([1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0]);',
+      tsCode: 2345,
     },
     {
       name: 'possibly undefined result assignment',

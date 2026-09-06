@@ -1,23 +1,23 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { mkdtempSync, writeFileSync, mkdirSync, rmSync, existsSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { dirname } from 'node:path';
 import { createInterface } from 'node:readline';
 import type { ChildProcessWithoutNullStreams } from 'node:child_process';
 
-import { MAX_CODE_BYTES } from '../src/server/validation/validators.js';
+import { MAX_CODE_BYTES } from '../packages/modeling/src/validation/validators.js';
 
-// `loadScriptSource` is not exported from src/server/mcp/mcp-server.ts (and
+// `loadScriptSource` is not exported from apps/manifold3d-mcp/src/server/mcp/mcp-server.ts (and
 // that file is in the no-touch list for this phase). We exercise its behaviour
 // through the running MCP server over stdio. This is an integration-style
 // unit test scoped to one helper, gated on the dist build that smoke uses.
 
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..');
-const entry = join(repoRoot, 'dist', 'server', 'index.js');
+const entry = join(repoRoot, 'apps', 'manifold3d-mcp', 'dist', 'manifold.mjs');
 
 interface ToolResult {
   content: [{ type: 'text'; text: string }];
@@ -230,6 +230,26 @@ describe.skipIf(skipUnlessBuilt)('loadScriptSource (via MCP server)', () => {
     const text = await callValidate({ filePath: jsonPath });
     expect(text).toMatch(/FILE_NOT_ALLOWED/);
     expect(text).toMatch(/extension '\.json' is not permitted/);
+  });
+
+  it('rejects an allowed-name symlink whose canonical target has a disallowed extension', async () => {
+    const jsonPath = join(tempDir, 'linked-config.json');
+    const symlinkPath = join(tempDir, 'linked-config.ts');
+    writeFileSync(jsonPath, '{"hello":"world"}\n', 'utf8');
+    symlinkSync(jsonPath, symlinkPath);
+    const text = await callValidate({ filePath: symlinkPath });
+    expect(text).toMatch(/FILE_NOT_ALLOWED/);
+    expect(text).toMatch(/resolves to extension '\.json'/);
+  });
+
+  it.skipIf(process.platform === 'win32')('rejects a named pipe without waiting for a writer', async () => {
+    const fifoPath = join(tempDir, 'blocked.ts');
+    const created = spawnSync('mkfifo', [fifoPath], { encoding: 'utf8' });
+    expect(created.status, created.stderr).toBe(0);
+
+    const text = await callValidate({ filePath: fifoPath });
+    expect(text).toMatch(/FILE_READ_ERROR/);
+    expect(text).toMatch(/is not a file/);
   });
 
   it('round-trips a sample under MANIFOLD_MCP_SCRIPT_ROOTS opt-in', async () => {

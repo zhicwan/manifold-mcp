@@ -1,12 +1,18 @@
 import { describe, expect, it } from 'vitest';
 
-import { isAnnotationsMessage } from '../src/server/annotations/annotations.js';
+import {
+  ANNOTATIONS_PROTOCOL_VERSION,
+  createAnnotationsMessage,
+  isAnnotationsMessage,
+} from '../packages/protocol/src/wire/annotations.js';
 
 describe('isAnnotationsMessage', () => {
   it('returns true for a valid empty annotations message', () => {
     expect(
       isAnnotationsMessage({
         kind: 'annotations',
+        protocolVersion: ANNOTATIONS_PROTOCOL_VERSION,
+        revision: 0,
         modelVersion: 'v1',
         items: [],
       }),
@@ -17,6 +23,8 @@ describe('isAnnotationsMessage', () => {
     expect(
       isAnnotationsMessage({
         kind: 'annotations',
+        protocolVersion: ANNOTATIONS_PROTOCOL_VERSION,
+        revision: 3,
         modelVersion: 'v2',
         items: [
           {
@@ -30,6 +38,32 @@ describe('isAnnotationsMessage', () => {
         ],
       }),
     ).toBe(true);
+  });
+
+  it('requires the current protocol version and revision', () => {
+    expect(
+      isAnnotationsMessage({
+        kind: 'annotations',
+        modelVersion: 'unversioned-v1',
+        items: [],
+      }),
+    ).toBe(false);
+    expect(createAnnotationsMessage('v2', 4, [])).toEqual({
+      kind: 'annotations',
+      protocolVersion: ANNOTATIONS_PROTOCOL_VERSION,
+      revision: 4,
+      modelVersion: 'v2',
+      items: [],
+    });
+    expect(
+      isAnnotationsMessage({
+        kind: 'annotations',
+        protocolVersion: ANNOTATIONS_PROTOCOL_VERSION,
+        modelVersion: 'v2',
+        items: [],
+      }),
+    ).toBe(false);
+    expect(isAnnotationsMessage({ ...createAnnotationsMessage('v2', 4, []), extra: true })).toBe(false);
   });
 
   it('returns false for null', () => {

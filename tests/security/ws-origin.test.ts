@@ -12,34 +12,26 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import WebSocket from 'ws';
+import type * as PreviewModuleSource from '../../apps/manifold3d-mcp/src/server/preview/preview-server.js';
 
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
-const distPreview = join(repoRoot, 'dist', 'server', 'preview', 'preview-server.js');
-const distPublic = join(repoRoot, 'dist', 'public', 'index.html');
+const distPreview = join(repoRoot, 'apps', 'manifold3d-mcp', 'build', 'server', 'preview', 'preview-server.js');
+const distPublic = join(repoRoot, 'apps', 'manifold3d-mcp', 'build', 'viewer', 'index.html');
 const skipUnlessBuilt = !existsSync(distPreview) || !existsSync(distPublic);
 
-interface PreviewModule {
-  startPreviewServer: (
-    preferredPort?: number,
-    host?: string,
-  ) => Promise<{
-    url: string;
-    port: number;
-    close(): Promise<void>;
-  }>;
-}
+type PreviewModule = typeof PreviewModuleSource;
 
 const loadModule = async (): Promise<PreviewModule> => (await import(pathToFileURL(distPreview).href)) as PreviewModule;
 
 type Outcome = 'open' | 'error' | 'close';
 
 const attempt = async (
-  port: number,
+  wsUrl: string,
   headers: Record<string, string>,
   timeoutMs = 5_000,
 ): Promise<{ outcome: Outcome; statusCode?: number; message?: string }> => {
   return new Promise(resolve => {
-    const ws = new WebSocket(`ws://127.0.0.1:${port}/ws`, {
+    const ws = new WebSocket(wsUrl, {
       headers,
       handshakeTimeout: timeoutMs,
     });
@@ -67,7 +59,9 @@ const attempt = async (
       resolve(result);
     };
     ws.on('open', () => finish({ outcome: 'open' }));
-    ws.on('unexpected-response', (_req, res) => finish({ outcome: 'error', statusCode: res.statusCode }));
+    ws.on('unexpected-response', (_req, res) =>
+      finish({ outcome: 'error', ...(res.statusCode !== undefined ? { statusCode: res.statusCode } : {}) }),
+    );
     ws.on('error', err => finish({ outcome: 'error', message: err.message }));
     ws.on('close', code => finish({ outcome: 'close', statusCode: code }));
   });
@@ -75,12 +69,14 @@ const attempt = async (
 
 describe.skipIf(skipUnlessBuilt)('SEC-3: preview WS rejects bad Origin/Host', () => {
   let port = 0;
+  let wsUrl = '';
   let stop: () => Promise<void>;
 
   beforeAll(async () => {
     const mod = await loadModule();
-    const handle = await mod.startPreviewServer(47471, '127.0.0.1');
-    port = handle.port;
+    const handle = await mod.startPreviewServer({ preferredPort: 47471, assetRoot: dirname(distPublic) });
+    port = Number(new URL(handle.url).port);
+    wsUrl = `${handle.url.replace(/^http/, 'ws')}ws`;
     stop = () => handle.close();
   }, 30_000);
 
@@ -91,12 +87,12 @@ describe.skipIf(skipUnlessBuilt)('SEC-3: preview WS rejects bad Origin/Host', ()
   });
 
   it('rejects upgrade requests with no Origin header', async () => {
-    const result = await attempt(port, { Host: `127.0.0.1:${port}` });
+    const result = await attempt(wsUrl, { Host: `127.0.0.1:${port}` });
     expect(result.outcome).not.toBe('open');
   });
 
   it('rejects upgrade requests with an evil Origin', async () => {
-    const result = await attempt(port, {
+    const result = await attempt(wsUrl, {
       Origin: 'http://evil.example.com',
       Host: `127.0.0.1:${port}`,
     });
@@ -104,7 +100,7 @@ describe.skipIf(skipUnlessBuilt)('SEC-3: preview WS rejects bad Origin/Host', ()
   });
 
   it('accepts upgrade requests from http://127.0.0.1:<port>', async () => {
-    const result = await attempt(port, {
+    const result = await attempt(wsUrl, {
       Origin: `http://127.0.0.1:${port}`,
       Host: `127.0.0.1:${port}`,
     });
@@ -112,7 +108,7 @@ describe.skipIf(skipUnlessBuilt)('SEC-3: preview WS rejects bad Origin/Host', ()
   });
 
   it('accepts upgrade requests from http://localhost:<port>', async () => {
-    const result = await attempt(port, {
+    const result = await attempt(wsUrl.replace('127.0.0.1', 'localhost'), {
       Origin: `http://localhost:${port}`,
       Host: `localhost:${port}`,
     });
@@ -123,7 +119,7 @@ describe.skipIf(skipUnlessBuilt)('SEC-3: preview WS rejects bad Origin/Host', ()
     // Classic DNS-rebinding scenario: attacker-controlled hostname resolves
     // to 127.0.0.1, browser sends a *trusted* Origin while the Host
     // header reflects the attacker's domain. Allow-list must cross-check.
-    const result = await attempt(port, {
+    const result = await attempt(wsUrl, {
       Origin: `http://127.0.0.1:${port}`,
       Host: 'attacker.example.com',
     });
@@ -133,6 +129,7 @@ describe.skipIf(skipUnlessBuilt)('SEC-3: preview WS rejects bad Origin/Host', ()
 
 describe.skipIf(skipUnlessBuilt)('SEC-3: preview WS dev-mode allow-list', () => {
   let port = 0;
+  let wsUrl = '';
   let stop: () => Promise<void>;
   let savedNodeEnv: string | undefined;
 
@@ -143,8 +140,13 @@ describe.skipIf(skipUnlessBuilt)('SEC-3: preview WS dev-mode allow-list', () => 
     savedNodeEnv = process.env.NODE_ENV;
     process.env.NODE_ENV = 'development';
     const mod = await loadModule();
-    const handle = await mod.startPreviewServer(47521, '127.0.0.1');
-    port = handle.port;
+    const handle = await mod.startPreviewServer({
+      preferredPort: 47521,
+      assetRoot: dirname(distPublic),
+      additionalOrigins: ['http://127.0.0.1:5173', 'http://localhost:5173'],
+    });
+    port = Number(new URL(handle.url).port);
+    wsUrl = `${handle.url.replace(/^http/, 'ws')}ws`;
     stop = () => handle.close();
   }, 30_000);
 
@@ -160,7 +162,7 @@ describe.skipIf(skipUnlessBuilt)('SEC-3: preview WS dev-mode allow-list', () => 
   });
 
   it('accepts the Vite dev-server origin when NODE_ENV=development', async () => {
-    const result = await attempt(port, {
+    const result = await attempt(wsUrl, {
       Origin: 'http://localhost:5173',
       Host: `127.0.0.1:${port}`,
     });

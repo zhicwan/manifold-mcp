@@ -1,6 +1,6 @@
 /**
  * Intentionally-frozen reference spike for headless rendering.
- * This duplicates logic from src/server/preview/renderer.ts on purpose —
+ * This duplicates logic from packages/modeling/src/preview/renderer.ts on purpose —
  * it serves as a standalone proof-of-concept and should NOT be kept in sync.
  * Run with: npx tsx scripts/spike-headless-render.ts
  */

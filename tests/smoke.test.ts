@@ -1,7 +1,6 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { createInterface, type Interface } from 'node:readline';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -10,14 +9,24 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { WebSocket } from 'ws';
 import { parse as parseYaml } from 'yaml';
 
+import { createAnnotationsMessage } from '../packages/protocol/src/wire/annotations.js';
+
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..');
-const entry = join(repoRoot, 'dist', 'server', 'index.js');
+const entry = join(repoRoot, 'apps', 'manifold3d-mcp', 'dist', 'manifold.mjs');
+const smokeScriptRoot = join(repoRoot, '.manifold3d-mcp-smoke-files');
 const skipUnlessBuilt = !existsSync(entry);
 
 interface JsonRpcResponse {
   id?: number;
   result?: unknown;
   error?: unknown;
+}
+
+interface InitializeResult {
+  serverInfo: {
+    name: string;
+    version: string;
+  };
 }
 
 interface TextContent {
@@ -72,7 +81,12 @@ class McpHarness {
     this.child = spawn(process.execPath, [entry], {
       cwd: repoRoot,
       stdio: ['pipe', 'pipe', 'pipe'],
-      env: { ...process.env, BROWSER: 'none', MANIFOLD_MCP_NO_OPEN: '1' },
+      env: {
+        ...process.env,
+        BROWSER: 'none',
+        MANIFOLD_MCP_NO_OPEN: '1',
+        MANIFOLD_MCP_SCRIPT_ROOTS: smokeScriptRoot,
+      },
     });
 
     this.readline = createInterface({ input: this.child.stdout });
@@ -114,14 +128,15 @@ class McpHarness {
     }
   }
 
-  async initialize(): Promise<void> {
-    await this.call('initialize', {
+  async initialize(): Promise<InitializeResult> {
+    const result = await this.call<InitializeResult>('initialize', {
       protocolVersion: '2024-11-05',
       capabilities: {},
       clientInfo: { name: 'smoke', version: '0' },
     });
     this.notify('notifications/initialized');
     await sleep(50);
+    return result;
   }
 
   async call<T>(method: string, params: unknown, timeoutMs = 30_000): Promise<T> {
@@ -153,6 +168,29 @@ class McpHarness {
       throw new Error('MCP server not started');
     }
     child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', method, params })}\n`);
+  }
+
+  pauseResponses(): void {
+    this.child?.stdout.pause();
+  }
+
+  resumeResponses(): void {
+    this.child?.stdout.resume();
+  }
+
+  finishInput(): Promise<{ code: number | null; signal: NodeJS.Signals | null }> {
+    const child = this.child;
+    if (!child) {
+      throw new Error('MCP server not started');
+    }
+    return new Promise((resolveExit, reject) => {
+      const timer = setTimeout(() => reject(new Error(`MCP did not exit after EOF.\n${this.stderr}`)), 5_000);
+      child.once('exit', (code, signal) => {
+        clearTimeout(timer);
+        resolveExit({ code, signal });
+      });
+      child.stdin.end();
+    });
   }
 
   async callTool(name: string, args: Record<string, unknown> = {}): Promise<ToolResult> {
@@ -266,14 +304,23 @@ function expectError(
 
 describe.skipIf(skipUnlessBuilt)('MCP smoke tests', () => {
   const harness = new McpHarness();
+  let initializeResult: InitializeResult;
 
   beforeAll(async () => {
+    await mkdir(smokeScriptRoot, { recursive: true });
     harness.start();
-    await harness.initialize();
+    initializeResult = await harness.initialize();
   }, 35_000);
 
   afterAll(async () => {
     await harness.stop();
+    await rm(smokeScriptRoot, { recursive: true, force: true });
+  });
+
+  it('reports the package version', async () => {
+    const manifest: unknown = JSON.parse(await readFile(join(repoRoot, 'package.json'), 'utf8'));
+    expect(manifest).toEqual(expect.objectContaining({ version: initializeResult.serverInfo.version }));
+    expect(initializeResult.serverInfo.name).toBe('manifold3d-mcp');
   });
 
   it('lists the expected tools', async () => {
@@ -429,7 +476,7 @@ result = Manifold.cube(size);
     expect(report).toMatch(/previewUrl:/);
 
     // Verify the preview server is actually serving the viewer bundle —
-    // a regression here surfaced when restructuring src/server moved
+    // a regression here surfaced when restructuring the server sources moved
     // preview-server.js into a subfolder and the relative `public/` path
     // broke. Hitting `/` should return the index.html, not a 404.
     const previewUrl = report.match(/previewUrl:\s*(\S+)/)?.[1];
@@ -470,6 +517,26 @@ result = Manifold.cube(size);
     expect(metadata.modelVersion).toEqual(expect.stringMatching(/^v/));
     expect(metadata.bboxMin).toEqual([-6, -4, -2]);
     expect(metadata.bboxMax).toEqual([6, 4, 2]);
+  });
+
+  it('keeps the committed preview model after a failed execution', async () => {
+    const committed = await harness.callTool('execute_script', {
+      code: 'result = Manifold.cube([14, 10, 6], true);',
+      description: 'preserved-after-failure',
+    });
+    expect(committed.isError).toBe(false);
+
+    const failed = await harness.callTool('execute_script', {
+      code: "throw new Error('do not commit'); result = Manifold.cube([2, 2, 2], true);",
+    });
+    expect(failed.isError).toBe(true);
+    expectError(reportOf(failed), { stage: 'runtime', code: 'RUNTIME_ERROR' });
+
+    const capture = await harness.callTool('capture_view', { view: 'iso', width: 128, height: 128 });
+    const metadata = parseYaml(textOf(capture)) as Record<string, unknown>;
+    expect(capture.isError).toBe(false);
+    expect(metadata.bboxMin).toEqual([-7, -5, -3]);
+    expect(metadata.bboxMax).toEqual([7, 5, 3]);
   });
 
   it('captures with includeAnnotations=true after point and sketch annotations are present', async () => {
@@ -518,13 +585,11 @@ result = Manifold.cube(size);
       await waitFor(() => typeof serverModelVersion === 'string', 'capture annotation model_version');
 
       annotationSocket.send(
-        JSON.stringify({
-          kind: 'annotations',
-          modelVersion: serverModelVersion,
-          items: [
+        JSON.stringify(
+          createAnnotationsMessage(serverModelVersion!, 1, [
             {
               id: 'capture-point-1',
-              modelVersion: serverModelVersion,
+              modelVersion: serverModelVersion!,
               kind: 'point',
               partLabel: 'point#1',
               note: 'capture this point',
@@ -532,7 +597,7 @@ result = Manifold.cube(size);
             },
             {
               id: 'capture-sketch-1',
-              modelVersion: serverModelVersion,
+              modelVersion: serverModelVersion!,
               kind: 'sketch',
               partLabel: 'sketch#1',
               note: 'capture this sketch',
@@ -546,8 +611,8 @@ result = Manifold.cube(size);
                 ],
               ],
             },
-          ],
-        }),
+          ]),
+        ),
       );
 
       let annotations = '';
@@ -589,10 +654,8 @@ result = Manifold.cube(size);
   }, 35_000);
 
   it('validates and executes snippets loaded from an absolute local filePath', async () => {
-    // Allow-list (SEC-2) requires filePath be inside MANIFOLD_MCP_SCRIPT_ROOTS,
-    // which defaults to the harness CWD (= repoRoot). Create the temp dir
-    // inside the repo so the default allow-list accepts it.
-    const tempDir = await mkdtemp(join(repoRoot, '.manifold3d-mcp-smoke-'));
+    // Allow-list (SEC-2) requires filePath be inside MANIFOLD_MCP_SCRIPT_ROOTS.
+    const tempDir = await mkdtemp(join(smokeScriptRoot, 'file-'));
     try {
       const filePath = join(tempDir, 'file-snippet.ts');
       await writeFile(
@@ -619,9 +682,9 @@ result = Manifold.cube(size);
   });
 
   it('rejects filePath sources outside the MANIFOLD_MCP_SCRIPT_ROOTS allow-list', async () => {
-    // tmpdir() is outside the harness CWD (= repoRoot) and thus outside
-    // the default allow-list. The error must NOT echo file contents.
-    const tempDir = await mkdtemp(join(tmpdir(), 'manifold3d-mcp-outside-'));
+    // This repo-local directory is outside the explicit smokeScriptRoot
+    // allow-list. The error must NOT echo file contents.
+    const tempDir = await mkdtemp(join(repoRoot, '.manifold3d-mcp-outside-'));
     try {
       const filePath = join(tempDir, 'leak.ts');
       const secret = 'SECRET_SHOULD_NOT_LEAK_42';
@@ -648,7 +711,7 @@ result = Manifold.cube(size);
   });
 
   it('omits diagnostic snippets for filePath-loaded sources', async () => {
-    const tempDir = await mkdtemp(join(repoRoot, '.manifold3d-mcp-smoke-'));
+    const tempDir = await mkdtemp(join(smokeScriptRoot, 'snippet-'));
     try {
       const filePath = join(tempDir, 'unknown-api.ts');
       // Manifold.box is not a known static API → emits an UNKNOWN_API
@@ -804,20 +867,18 @@ result = Manifold.cube(size);
       );
 
       annotationSocket.send(
-        JSON.stringify({
-          kind: 'annotations',
-          modelVersion: serverModelVersion,
-          items: [
+        JSON.stringify(
+          createAnnotationsMessage(serverModelVersion!, 1, [
             {
               id: 'ann_test_1',
-              modelVersion: serverModelVersion,
+              modelVersion: serverModelVersion!,
               kind: 'point',
               partLabel: 'point#1',
               note: 'too thick',
               worldCoord: [1.5, 0, 2.0],
             },
-          ],
-        }),
+          ]),
+        ),
       );
       let annotations = '';
       await waitForAsync(async () => {
@@ -841,4 +902,19 @@ result = Manifold.cube(size);
       await closeWebSocket(annotationSocket);
     }
   }, 35_000);
+
+  it('drains accepted responses and the worker before exiting on stdin EOF', async () => {
+    const filePath = join(smokeScriptRoot, 'eof.ts');
+    await writeFile(filePath, 'result = Manifold.cube(1);\n');
+    harness.pauseResponses();
+    const validated = harness.callTool('validate_script', { filePath });
+    const listed = Promise.all(Array.from({ length: 128 }, () => harness.call<ToolsListResult>('tools/list', {})));
+    const exited = harness.finishInput();
+    await sleep(100);
+    harness.resumeResponses();
+    const [result, lists, outcome] = await Promise.all([validated, listed, exited]);
+    expect(result.isError).toBe(false);
+    expect(lists.every(list => list.tools.length === 4)).toBe(true);
+    expect(outcome).toEqual({ code: 0, signal: null });
+  });
 });

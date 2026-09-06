@@ -1,23 +1,15 @@
-/**
- * VIE-4: Cache-Control header policy for the static preview assets.
- *
- * Two-pronged:
- *  1. Pure-function lock on the matrix (no server needed) using the
- *     exported `_testCacheControlFor` helper.
- *  2. End-to-end fetch against a real preview server confirming the
- *     headers are actually written into the HTTP response.
- */
+/** VIE-4: Cache-Control header policy for the static preview assets. */
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { existsSync, readdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
-import type * as PreviewModuleNs from '../src/server/preview/preview-server.js';
+import type * as PreviewModuleNs from '../apps/manifold3d-mcp/src/server/preview/preview-server.js';
 
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..');
-const distPreview = join(repoRoot, 'dist', 'server', 'preview', 'preview-server.js');
-const distPublic = join(repoRoot, 'dist', 'public', 'index.html');
-const distAssets = join(repoRoot, 'dist', 'public', 'assets');
+const distPreview = join(repoRoot, 'apps', 'manifold3d-mcp', 'build', 'server', 'preview', 'preview-server.js');
+const distPublic = join(repoRoot, 'apps', 'manifold3d-mcp', 'build', 'viewer', 'index.html');
+const distAssets = join(repoRoot, 'apps', 'manifold3d-mcp', 'build', 'viewer', 'assets');
 const skipUnlessBuilt = !existsSync(distPreview) || !existsSync(distPublic);
 
 type PreviewModule = typeof PreviewModuleNs;
@@ -27,23 +19,13 @@ let handle: PreviewModule extends { startPreviewServer: (...args: never[]) => Pr
 describe.skipIf(skipUnlessBuilt)('preview server: cache-control matrix', () => {
   beforeAll(async () => {
     previewModule = (await import(pathToFileURL(distPreview).href)) as PreviewModule;
-    handle = await previewModule.startPreviewServer(47571);
+    handle = await previewModule.startPreviewServer({ preferredPort: 47571, assetRoot: dirname(distPublic) });
   }, 15_000);
 
   afterAll(async () => {
     if (handle) {
       await handle.close();
     }
-  });
-
-  it('classifies index.html as no-store, hashed assets as immutable, others as short-lived', () => {
-    const cc = previewModule._testCacheControlFor;
-    expect(cc('index.html')).toBe('no-store');
-    expect(cc('')).toBe('no-store');
-    expect(cc('assets/index-CJ7mf_B0.js')).toBe('public, max-age=31536000, immutable');
-    expect(cc('assets/index-abcdef.css')).toBe('public, max-age=31536000, immutable');
-    expect(cc('favicon.ico')).toBe('public, max-age=300');
-    expect(cc('robots.txt')).toBe('public, max-age=300');
   });
 
   it('returns Cache-Control: no-store for /index.html', async () => {
@@ -59,14 +41,9 @@ describe.skipIf(skipUnlessBuilt)('preview server: cache-control matrix', () => {
   });
 
   it('returns immutable+max-age=1y for hashed assets', async () => {
-    if (!existsSync(distAssets)) {
-      // Viewer not built with hashed assets — skip rather than fail. The
-      // skipUnlessBuilt gate above already covers a missing dist/public.
-      return;
-    }
     const candidates = readdirSync(distAssets);
     const asset = candidates.find(f => f.endsWith('.js') || f.endsWith('.css'));
-    expect(asset, 'expected at least one hashed asset under dist/public/assets/').toBeDefined();
+    expect(asset, 'expected at least one hashed Viewer asset').toBeDefined();
     const res = await fetch(`${handle.url}assets/${asset!}`);
     expect(res.status).toBe(200);
     expect(res.headers.get('cache-control')).toBe('public, max-age=31536000, immutable');

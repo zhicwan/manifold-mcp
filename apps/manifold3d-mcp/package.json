@@ -1,0 +1,19 @@
+{
+  "name": "@zhicwan/manifold3d-mcp",
+  "version": "0.0.0-private",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc -b && npm run build --workspace @manifold3d/viewer && node scripts/build.mjs"
+  },
+  "dependencies": {
+    "@manifold3d/modeling": "0.0.0-private",
+    "@manifold3d/protocol": "0.0.0-private",
+    "@manifold3d/viewer-host": "0.0.0-private",
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "yaml": "^2.9.0"
+  },
+  "engines": {
+    "node": ">=24"
+  }
+}

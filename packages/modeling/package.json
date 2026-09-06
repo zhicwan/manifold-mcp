@@ -1,0 +1,58 @@
+{
+  "name": "@manifold3d/modeling",
+  "version": "0.0.0-private",
+  "private": true,
+  "type": "module",
+  "files": [
+    "dist"
+  ],
+  "exports": {
+    "./modeling.js": {
+      "types": "./dist/modeling.d.ts",
+      "default": "./dist/modeling.js"
+    },
+    "./preview/renderer.js": {
+      "types": "./dist/preview/renderer.d.ts",
+      "default": "./dist/preview/renderer.js"
+    },
+    "./runner/host.js": {
+      "types": "./dist/runner/host.d.ts",
+      "default": "./dist/runner/host.js"
+    },
+    "./runner/model-artifact.js": {
+      "types": "./dist/runner/model-artifact.d.ts",
+      "default": "./dist/runner/model-artifact.js"
+    },
+    "./runner/protocol.js": {
+      "types": "./dist/runner/protocol.d.ts",
+      "default": "./dist/runner/protocol.js"
+    },
+    "./runner/worker.js": {
+      "types": "./dist/runner/worker.d.ts",
+      "default": "./dist/runner/worker.js"
+    },
+    "./validation/report.js": {
+      "types": "./dist/validation/report.d.ts",
+      "default": "./dist/validation/report.js"
+    },
+    "./validation/validators.js": {
+      "types": "./dist/validation/validators.d.ts",
+      "default": "./dist/validation/validators.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -b"
+  },
+  "dependencies": {
+    "@jridgewell/trace-mapping": "^0.3.31",
+    "@manifold3d/protocol": "0.0.0-private",
+    "manifold-3d": "^3.5.1",
+    "three": "^0.185.0",
+    "typescript": "^6.0.3",
+    "yaml": "^2.9.0"
+  },
+  "devDependencies": {
+    "@types/node": "^26.4.1",
+    "@types/three": "^0.185.0"
+  }
+}

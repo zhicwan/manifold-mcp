@@ -1,0 +1,26 @@
+{
+  "name": "@manifold3d/protocol",
+  "version": "0.0.0-private",
+  "private": true,
+  "type": "module",
+  "files": [
+    "dist"
+  ],
+  "exports": {
+    "./wire/model.js": {
+      "types": "./dist/wire/model.d.ts",
+      "default": "./dist/wire/model.js"
+    },
+    "./wire/annotations.js": {
+      "types": "./dist/wire/annotations.d.ts",
+      "default": "./dist/wire/annotations.js"
+    },
+    "./wire/host-actions.js": {
+      "types": "./dist/wire/host-actions.d.ts",
+      "default": "./dist/wire/host-actions.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -b"
+  }
+}

@@ -1,83 +1,91 @@
-// SEC-1 regression suite: prove the worker sandbox actually scrubs the
-// dangerous Node globals (`require`, `process`, `Buffer`, `module`) and
-// freezes built-in prototypes. The static linter (`validators.ts`) already
-// rejects literal references to those identifiers, so user code cannot say
-// `typeof require` directly. Instead these probes go through the
-// `({}).constructor.constructor("...")()` chain — the AST scanner sees only
-// a string literal, but the snippet runs inside the same scrubbed scope at
-// runtime, which is the surface we care about.
+// SEC-1 regression suite for dynamic-code constructor recovery, dynamic
+// import, host globals, and shared primordial mutation.
 
-import { describe, expect, it, beforeAll } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { existsSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
-import type * as HostModuleNs from '../../src/server/runner/host.js';
+import type * as HostModuleNs from '../../packages/modeling/src/runner/host.js';
 
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
-const distHost = join(repoRoot, 'dist', 'server', 'runner', 'host.js');
-const workerJs = join(repoRoot, 'dist', 'server', 'runner', 'worker.js');
+const distHost = join(repoRoot, 'packages', 'modeling', 'dist', 'runner', 'host.js');
+const workerJs = join(repoRoot, 'packages', 'modeling', 'dist', 'runner', 'worker.js');
 
 const skipUnlessBuilt = !existsSync(workerJs) || !existsSync(distHost) || process.env.SKIP_RUNNER_TESTS === '1';
 
 type HostModule = typeof HostModuleNs;
 let host: HostModule;
-
-// `({}).constructor` is `Object`, and `Object.constructor` is `Function`.
-// Calling `Function("body")()` evaluates `body` as code and returns its
-// value. We use it to *evaluate the identifier name from a string* so the
-// pre-execution AST lint never sees a banned identifier in the source.
-const probe = (name: string): string => `
-  const probeFn = ({}).constructor.constructor("return typeof " + ${JSON.stringify(name)});
-  const observed = probeFn();
-  // Branch on whether the global survived the worker scrub. If it did,
-  // produce a unit cube (size 1); if it was wiped, produce a 2-cube. The
-  // test then asserts the bounding box matches the "scrubbed" branch.
-  if (observed === 'undefined') {
-    result = Manifold.cube([2, 2, 2], true);
-  } else {
-    result = Manifold.cube([1, 1, 1], true);
-  }
-`;
+let runner: InstanceType<HostModule['Runner']>;
 
 describe.skipIf(skipUnlessBuilt)('SEC-1: worker sandbox scrubs dangerous globals', () => {
   beforeAll(async () => {
     host = (await import(pathToFileURL(distHost).href)) as HostModule;
+    runner = new host.Runner();
   });
 
-  for (const ident of ['require', 'process', 'Buffer', 'module']) {
-    it(`reports \`typeof ${ident}\` as 'undefined' inside the worker`, async () => {
-      const { report } = await host.run({ mode: 'validate', code: probe(ident) }, { timeoutMs: 15_000 });
-      expect(report.ok).toBe(true);
-      expect(report.errors).toEqual([]);
-      // The "scrubbed" branch produced a 2-unit cube. If the identifier
-      // had leaked through, we'd see a 1-unit cube, and this would fail.
-      expect(report.stats?.bbox?.size?.[0]).toBe(2);
-    }, 20_000);
-  }
+  afterAll(async () => {
+    await runner.dispose();
+  });
 
-  it('blocks the classic `({}).constructor.constructor("return process")()` escape', async () => {
-    // Even though the AST scan does not see the literal identifier, at
-    // runtime the inner Function() body references `process`, which has
-    // been deleted from the worker scope. The expression therefore throws
-    // a ReferenceError and the run reports an error rather than handing
-    // back a process handle.
+  it('rejects direct dynamic import with a clear sandbox diagnostic', async () => {
+    const { report } = await runner.run(
+      { mode: 'validate', code: `void import('node:fs'); result = Manifold.cube();` },
+      { timeoutMs: 15_000 },
+    );
+    expect(report.ok).toBe(false);
+    expect(report.errors.some(error => error.message.includes('Dynamic import() is not allowed'))).toBe(true);
+  }, 20_000);
+
+  it('blocks the reviewed indirect Function + import("node:fs") exploit', async () => {
     const code = `
-      const escape = ({}).constructor.constructor("return process");
-      const proc = escape();
-      result = Manifold.cube([proc ? 1 : 2, 1, 1], true);
+      const importer = ({}).constructor.constructor('return import("node:fs")');
+      void importer();
+      result = Manifold.cube();
     `;
-    const { report } = await host.run({ mode: 'validate', code }, { timeoutMs: 15_000 });
-    if (report.ok) {
-      // If the runtime survived, the cube *must* have come from the
-      // "no process" branch. Anything else means the escape worked.
-      expect(report.stats?.bbox?.size?.[0]).toBe(2);
-    } else {
-      // The expected outcome under the current scrub is a ReferenceError
-      // surfaced as a RUNTIME_ERROR (or similar). Accept any error code so
-      // long as the script did NOT successfully obtain a `process` handle.
-      expect(report.errors.length).toBeGreaterThan(0);
-    }
+    const { report } = await runner.run({ mode: 'validate', code }, { timeoutMs: 15_000 });
+    expect(report.ok).toBe(false);
+    expect(report.errors.some(error => error.message.includes('dynamic-code constructors'))).toBe(true);
+  }, 20_000);
+
+  it('disconnects Function at runtime even when constructor lookup is obfuscated past static lint', async () => {
+    const code = `
+      const key = ['con', 'structor'].join('');
+      const objectCtor = Reflect.get({}, key) as object;
+      const dynamicCtor = Reflect.get(objectCtor, key) as ((...args: string[]) => unknown) | undefined;
+      let blocked = false;
+      try {
+        const importer = Reflect.apply(
+          dynamicCtor as (...args: string[]) => unknown,
+          undefined,
+          ['return import("node:fs")'],
+        ) as () => unknown;
+        Reflect.apply(importer, undefined, []);
+      } catch {
+        blocked = true;
+      }
+      result = Manifold.cube([blocked ? 2 : 1, 1, 1], true);
+    `;
+    const { report } = await runner.run({ mode: 'validate', code }, { timeoutMs: 15_000 });
+    expect(report.ok, JSON.stringify(report.errors)).toBe(true);
+    expect(report.stats?.bbox?.size?.[0]).toBe(2);
+  }, 20_000);
+
+  it('disconnects every Function-family constructor from user-reachable prototypes', async () => {
+    const code = `
+      const key = ['con', 'structor'].join('');
+      const prototypes: object[] = [
+        Object.getPrototypeOf(() => 0),
+        Object.getPrototypeOf(async () => 0),
+        Object.getPrototypeOf(function* () { yield 0; }),
+        Object.getPrototypeOf(async function* () { yield 0; }),
+      ];
+      const blocked = prototypes.every((prototype) => Reflect.get(prototype, key) === undefined);
+      result = Manifold.cube([blocked ? 2 : 1, 1, 1], true);
+    `;
+    const { report } = await runner.run({ mode: 'validate', code }, { timeoutMs: 15_000 });
+    expect(report.ok, JSON.stringify(report.errors)).toBe(true);
+    expect(report.stats?.bbox?.size?.[0]).toBe(2);
   }, 20_000);
 
   it('keeps `Object.prototype` frozen so prototype-pollution attempts fail', async () => {
@@ -98,8 +106,58 @@ describe.skipIf(skipUnlessBuilt)('SEC-1: worker sandbox scrubs dangerous globals
       }
       result = Manifold.cube([frozen ? 2 : 1, 1, 1], true);
     `;
-    const { report } = await host.run({ mode: 'validate', code }, { timeoutMs: 15_000 });
+    const { report } = await runner.run({ mode: 'validate', code }, { timeoutMs: 15_000 });
     expect(report.ok, JSON.stringify(report.errors)).toBe(true);
     expect(report.stats?.bbox?.size?.[0]).toBe(2);
+  }, 20_000);
+
+  it('freezes ArrayIteratorPrototype before same-run cleanup and report processing', async () => {
+    const code = `
+      const iterators: object[] = [
+        [][Symbol.iterator](),
+        new Map<unknown, unknown>().entries(),
+        new Set<unknown>().values(),
+        ''[Symbol.iterator](),
+        new Uint8Array().values(),
+      ];
+      const chainsFrozen = iterators.every((iterator) => {
+        let prototype = Object.getPrototypeOf(iterator) as object | null;
+        while (prototype && prototype !== Object.prototype) {
+          if (!Object.isFrozen(prototype)) return false;
+          prototype = Object.getPrototypeOf(prototype) as object | null;
+        }
+        return true;
+      });
+      const generator = (function* () { yield 1; })();
+      const asyncGenerator = (async function* () { yield 1; })();
+      const commonIteratorPrototypes = [
+        Object.getPrototypeOf(Object.getPrototypeOf(generator)),
+        Object.getPrototypeOf(Object.getPrototypeOf(asyncGenerator)),
+      ] as object[];
+      const commonChainsFrozen = commonIteratorPrototypes.every((start) => {
+        let prototype: object | null = start;
+        while (prototype && prototype !== Object.prototype) {
+          if (!Object.isFrozen(prototype)) return false;
+          prototype = Object.getPrototypeOf(prototype) as object | null;
+        }
+        return true;
+      });
+      const iteratorPrototype = Object.getPrototypeOf([][Symbol.iterator]()) as {
+        next(): IteratorResult<unknown>;
+      };
+      let assignmentBlocked = false;
+      try {
+        iteratorPrototype.next = () => ({ done: true, value: undefined });
+      } catch {
+        assignmentBlocked = true;
+      }
+      result = chainsFrozen && commonChainsFrozen && assignmentBlocked
+        ? Manifold.cube([2, 2, 2], true)
+        : Manifold.cube([9, 9, 9], true);
+    `;
+    const { report } = await runner.run({ mode: 'validate', code }, { timeoutMs: 15_000 });
+    expect(report.ok, JSON.stringify(report.errors)).toBe(true);
+    expect(report.stats?.bbox?.size).toEqual([2, 2, 2]);
+    expect(report.hints.some(hint => hint.startsWith('GC_DELETE_FAILED:'))).toBe(false);
   }, 20_000);
 });

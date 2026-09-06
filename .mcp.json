@@ -1,10 +1,8 @@
 {
   "mcpServers": {
     "manifold3d-mcp": {
-      "type": "local",
       "command": "node",
-      "args": ["dist/server/index.js"],
-      "tools": ["*"]
+      "args": ["apps/manifold3d-mcp/dist/manifold.mjs"]
     }
   }
 }

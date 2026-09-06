@@ -1,14 +1,14 @@
-import { describe, expect, it, beforeAll } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
-import type * as HostModuleNs from '../src/server/runner/host.js';
+import type * as HostModuleNs from '../packages/modeling/src/runner/host.js';
 
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..');
 const samplesDir = join(repoRoot, 'samples');
-const distHost = join(repoRoot, 'dist', 'server', 'runner', 'host.js');
-const workerJs = join(repoRoot, 'dist', 'server', 'runner', 'worker.js');
+const distHost = join(repoRoot, 'packages', 'modeling', 'dist', 'runner', 'host.js');
+const workerJs = join(repoRoot, 'packages', 'modeling', 'dist', 'runner', 'worker.js');
 
 const skipUnlessBuilt = !existsSync(workerJs) || !existsSync(distHost) || process.env.SKIP_RUNNER_TESTS === '1';
 
@@ -18,10 +18,16 @@ const sampleFiles = existsSync(samplesDir)
 
 type HostModule = typeof HostModuleNs;
 let host: HostModule;
+let runner: InstanceType<HostModule['Runner']>;
 
 describe.skipIf(skipUnlessBuilt || sampleFiles.length === 0)('samples/*.ts validate cleanly', () => {
   beforeAll(async () => {
     host = (await import(pathToFileURL(distHost).href)) as HostModule;
+    runner = new host.Runner();
+  });
+
+  afterAll(async () => {
+    await runner.dispose();
   });
 
   it.each(sampleFiles)(
@@ -29,7 +35,7 @@ describe.skipIf(skipUnlessBuilt || sampleFiles.length === 0)('samples/*.ts valid
     async fileName => {
       const fullPath = join(samplesDir, fileName);
       const code = readFileSync(fullPath, 'utf8');
-      const { report } = await host.run({ mode: 'validate', code }, { timeoutMs: 30_000 });
+      const { report } = await runner.run({ mode: 'validate', code }, { timeoutMs: 30_000 });
       if (!report.ok) {
         const firstError = report.errors[0];
         throw new Error(

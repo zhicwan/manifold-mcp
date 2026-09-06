@@ -2,274 +2,175 @@
 
 import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
 import process from 'node:process';
+import { fileURLToPath } from 'node:url';
 
-const here = dirname(fileURLToPath(import.meta.url));
-const repoRoot = resolve(here, '..');
-const packageName = '@zhicwan/manifold3d-mcp';
-const failures = [];
+import ts from 'typescript';
+
+const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+const mcpSourcePath = 'apps/manifold3d-mcp/src/server/mcp/mcp-server.ts';
+const canvasSourcePath = 'apps/copilot-extension/src/tools.ts';
+const mcpSkillPath = 'skills/use-manifold/SKILL.md';
+const canvasSkillPath = 'skills/use-manifold-canvas/SKILL.md';
+
+export function collectMarkdownToolNames(markdown) {
+  const toolsHeading = markdown.match(/^## Tools\s*$/m);
+  if (!toolsHeading) {
+    return { tools: [], error: 'Could not find a "## Tools" section.' };
+  }
+  const afterHeading = markdown.slice(toolsHeading.index + toolsHeading[0].length);
+  const nextHeading = afterHeading.search(/^## /m);
+  const toolsSection = nextHeading < 0 ? afterHeading : afterHeading.slice(0, nextHeading);
+  return {
+    tools: uniqSorted([...toolsSection.matchAll(/\*\*`([^`]+)`\*\*/g)].map(match => match[1])),
+    error: null,
+  };
+}
+
+export function collectSourceToolNames(sourceText, sourcePath = 'source.ts') {
+  const sourceFile = ts.createSourceFile(sourcePath, sourceText, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+  const candidates = [];
+
+  const visit = node => {
+    if (ts.isArrayLiteralExpression(node)) {
+      const names = [];
+      let valid = true;
+      for (const element of node.elements) {
+        if (!ts.isObjectLiteralExpression(element)) {
+          valid = false;
+          break;
+        }
+        const nameProperty = element.properties.find(
+          property => ts.isPropertyAssignment(property) && isPropertyName(property.name, 'name'),
+        );
+        if (
+          !nameProperty ||
+          !ts.isPropertyAssignment(nameProperty) ||
+          !ts.isStringLiteralLike(nameProperty.initializer)
+        ) {
+          valid = false;
+          break;
+        }
+        names.push(nameProperty.initializer.text);
+      }
+      if (valid && names.length > 0) {
+        candidates.push(names);
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+
+  visit(sourceFile);
+
+  if (candidates.length !== 1) {
+    return {
+      tools: [],
+      error: `Expected exactly one tool-definition array in ${sourcePath}; found ${candidates.length}.`,
+    };
+  }
+
+  return {
+    tools: uniqSorted(candidates[0]),
+    error: null,
+  };
+}
+
+export function compareToolContracts({ sourceTools, skillTools, label }) {
+  const missingFromSkill = sourceTools.filter(tool => !skillTools.includes(tool));
+  const extraInSkill = skillTools.filter(tool => !sourceTools.includes(tool));
+  if (missingFromSkill.length === 0 && extraInSkill.length === 0) {
+    return null;
+  }
+  return [
+    `${label} tool list must match its implementation source.`,
+    'Source tools:',
+    formatList(sourceTools),
+    'Skill tools:',
+    formatList(skillTools),
+    'Missing from SKILL.md:',
+    formatList(missingFromSkill),
+    'Documented in SKILL.md but not implemented:',
+    formatList(extraInSkill),
+  ].join('\n');
+}
+
+export function loadToolContract(path) {
+  return collectMarkdownToolNames(readText(path));
+}
 
 function readText(relativePath) {
   return readFileSync(resolve(repoRoot, relativePath), 'utf8');
 }
 
-function readJson(relativePath) {
-  const text = readText(relativePath);
-  try {
-    return JSON.parse(text);
-  } catch (error) {
-    // A common cause is a symlink that Git materialized as a plain text file
-    // (e.g. a Windows checkout without symlink support), leaving the target
-    // path rather than JSON in the file.
-    addFailure(
-      `${relativePath} is not valid JSON (${error.message}). If it is a Git ` +
-        `symlink materialized as text on Windows, enable core.symlinks or ` +
-        `replace it with a real file.`,
-    );
-    return undefined;
-  }
-}
-
-function addFailure(message) {
-  failures.push(message);
+function isPropertyName(name, expected) {
+  return ts.isIdentifier(name) || ts.isStringLiteralLike(name) ? name.text === expected : false;
 }
 
 function uniqSorted(values) {
   return [...new Set(values)].sort((left, right) => left.localeCompare(right));
 }
 
-function versionMajorMinor(version) {
-  const match = /^(?<major>\d+)\.(?<minor>\d+)\.(?<patch>\d+)$/.exec(version);
-  if (!match?.groups) {
-    addFailure(`Invalid semver version: ${version}`);
-    return undefined;
-  }
-  return `${match.groups.major}.${match.groups.minor}`;
-}
-
-function checkVersions() {
-  const packageJson = readJson('package.json');
-  const pluginJson = readJson('plugin/plugin.json');
-  const claudePluginJson = readJson('plugin/.claude-plugin/plugin.json');
-  const marketplaceJson = readJson('.claude-plugin/marketplace.json');
-  const pluginMcpJson = readJson('plugin/.mcp.json');
-
-  if (!packageJson || !pluginJson || !claudePluginJson || !marketplaceJson || !pluginMcpJson) {
-    // readJson already recorded a clear failure for the unparseable file(s).
-    return;
-  }
-
-  const marketplacePlugin = marketplaceJson.plugins?.find(plugin => plugin?.name === 'manifold');
-  if (!marketplacePlugin) {
-    addFailure('.claude-plugin/marketplace.json does not contain a plugin entry named "manifold".');
-    return;
-  }
-
-  const expectedVersion = packageJson.version;
-  const versions = [
-    ['package.json', packageJson.version],
-    ['plugin/plugin.json', pluginJson.version],
-    ['plugin/.claude-plugin/plugin.json', claudePluginJson.version],
-    ['.claude-plugin/marketplace.json plugins[name=manifold]', marketplacePlugin.version],
-  ];
-  const mismatches = versions.filter(([, version]) => version !== expectedVersion);
-  if (mismatches.length > 0) {
-    addFailure(
-      [
-        'Package/plugin versions must match package.json:',
-        ...versions.map(([label, version]) => `  - ${label}: ${version}`),
-      ].join('\n'),
-    );
-  }
-
-  const serverConfig = pluginMcpJson.mcpServers?.['manifold3d-mcp'];
-  const args = Array.isArray(serverConfig?.args) ? serverConfig.args : [];
-  const packageArg = args.find(arg => typeof arg === 'string' && arg.startsWith(`${packageName}@`));
-  if (!packageArg) {
-    addFailure(
-      `plugin/.mcp.json args must include a versioned ${packageName}@x.y.z or ${packageName}@x.y.x package spec.`,
-    );
-    return;
-  }
-
-  const escapedPackageName = packageName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const rangeMatch = new RegExp(`^${escapedPackageName}@(\\d+)\\.(\\d+)\\.(?:\\d+|x)$`).exec(packageArg);
-  if (!rangeMatch) {
-    addFailure(
-      `plugin/.mcp.json package spec must be ${packageName}@x.y.z or ${packageName}@x.y.x; found ${packageArg}.`,
-    );
-    return;
-  }
-
-  const packageMajorMinor = versionMajorMinor(expectedVersion);
-  const rangeMajorMinor = `${rangeMatch[1]}.${rangeMatch[2]}`;
-  if (packageMajorMinor && rangeMajorMinor !== packageMajorMinor) {
-    addFailure(
-      `plugin/.mcp.json package range ${packageArg} must share package.json major.minor ${packageMajorMinor}.`,
-    );
-  }
-}
-
-function findMatchingBracket(source, openIndex) {
-  let depth = 0;
-  let quote;
-  let escaped = false;
-  let lineComment = false;
-  let blockComment = false;
-
-  for (let index = openIndex; index < source.length; index++) {
-    const char = source[index];
-    const next = source[index + 1];
-
-    if (lineComment) {
-      if (char === '\n') {
-        lineComment = false;
-      }
-      continue;
-    }
-    if (blockComment) {
-      if (char === '*' && next === '/') {
-        blockComment = false;
-        index++;
-      }
-      continue;
-    }
-    if (quote) {
-      if (escaped) {
-        escaped = false;
-      } else if (char === '\\') {
-        escaped = true;
-      } else if (char === quote) {
-        quote = undefined;
-      }
-      continue;
-    }
-
-    if (char === '/' && next === '/') {
-      lineComment = true;
-      index++;
-      continue;
-    }
-    if (char === '/' && next === '*') {
-      blockComment = true;
-      index++;
-      continue;
-    }
-    if (char === "'" || char === '"' || char === '`') {
-      quote = char;
-      continue;
-    }
-    if (char === '[') {
-      depth++;
-      continue;
-    }
-    if (char === ']') {
-      depth--;
-      if (depth === 0) {
-        return index;
-      }
-    }
-  }
-
-  return -1;
-}
-
-function readServerToolNames() {
-  const source = readText('src/server/mcp/mcp-server.ts');
-  const toolsMarker = 'tools:';
-  const toolsIndex = source.indexOf(toolsMarker);
-  const openBracket = source.indexOf('[', toolsIndex);
-  if (toolsIndex < 0 || openBracket < 0) {
-    addFailure('Could not find the MCP tools array in src/server/mcp/mcp-server.ts.');
-    return [];
-  }
-
-  const closeBracket = findMatchingBracket(source, openBracket);
-  if (closeBracket < 0) {
-    addFailure('Could not find the end of the MCP tools array in src/server/mcp/mcp-server.ts.');
-    return [];
-  }
-
-  const toolsBlock = source.slice(openBracket, closeBracket + 1);
-  return uniqSorted([...toolsBlock.matchAll(/\bname:\s*['"]([a-z][\w-]*)['"]/g)].map(match => match[1]));
-}
-
-function readSkillToolNames() {
-  const skill = readText('plugin/skills/use-manifold/SKILL.md');
-  const toolsHeading = skill.match(/^## Tools\s*$/m);
-  if (!toolsHeading) {
-    addFailure('Could not find a "## Tools" section in plugin/skills/use-manifold/SKILL.md.');
-    return [];
-  }
-
-  const afterTools = skill.slice(toolsHeading.index + toolsHeading[0].length);
-  const nextHeading = afterTools.search(/^## /m);
-  const toolsSection = nextHeading < 0 ? afterTools : afterTools.slice(0, nextHeading);
-  return uniqSorted([...toolsSection.matchAll(/\*\*`([^`]+)`\*\*/g)].map(match => match[1]));
-}
-
 function formatList(values) {
   return values.length === 0 ? '  (none)' : values.map(value => `  - ${value}`).join('\n');
 }
 
-function checkToolDocs() {
-  const serverTools = readServerToolNames();
-  const skillTools = readSkillToolNames();
-
-  const missingFromSkill = serverTools.filter(tool => !skillTools.includes(tool));
-  const extraInSkill = skillTools.filter(tool => !serverTools.includes(tool));
-  if (missingFromSkill.length > 0 || extraInSkill.length > 0) {
-    addFailure(
-      [
-        'SKILL.md tool list must match MCP server registered tools.',
-        'Server tools:',
-        formatList(serverTools),
-        'Skill tools:',
-        formatList(skillTools),
-        'Missing from SKILL.md:',
-        formatList(missingFromSkill),
-        'Documented in SKILL.md but not registered by the server:',
-        formatList(extraInSkill),
-      ].join('\n'),
-    );
-  }
+function readSourceToolContract(relativePath) {
+  return collectSourceToolNames(readText(relativePath), relativePath);
 }
 
-function checkMarketplaceCopies() {
-  // `.claude-plugin/marketplace.json` and `.github/plugin/marketplace.json`
-  // must stay byte-identical (they used to be a symlink; they are now two real
-  // files so Windows checkouts get real JSON). sync-versions.mjs keeps both in
-  // step; this guard catches any divergence.
-  let a;
-  let b;
-  try {
-    a = readText('.claude-plugin/marketplace.json');
-  } catch (error) {
-    addFailure(`Could not read .claude-plugin/marketplace.json: ${error.message}`);
+function fail(message) {
+  process.stderr.write(`Sync check failed:\n\n${message}\n`);
+  process.exitCode = 1;
+}
+
+function run() {
+  const mcpSource = readSourceToolContract(mcpSourcePath);
+  if (mcpSource.error) {
+    fail(mcpSource.error);
     return;
   }
-  try {
-    b = readText('.github/plugin/marketplace.json');
-  } catch (error) {
-    addFailure(`Could not read .github/plugin/marketplace.json: ${error.message}`);
+  const canvasSource = readSourceToolContract(canvasSourcePath);
+  if (canvasSource.error) {
+    fail(canvasSource.error);
     return;
   }
-  if (a !== b) {
-    addFailure(
-      '.claude-plugin/marketplace.json and .github/plugin/marketplace.json must be ' +
-        'byte-identical. Run `node scripts/sync-versions.mjs` or copy one over the other.',
-    );
+  const mcpSkill = loadToolContract(mcpSkillPath);
+  if (mcpSkill.error) {
+    fail(`${mcpSkillPath}: ${mcpSkill.error}`);
+    return;
+  }
+  const canvasSkill = loadToolContract(canvasSkillPath);
+  if (canvasSkill.error) {
+    fail(`${canvasSkillPath}: ${canvasSkill.error}`);
+    return;
+  }
+
+  const failures = [
+    compareToolContracts({
+      sourceTools: mcpSource.tools,
+      skillTools: mcpSkill.tools,
+      label: 'MCP',
+    }),
+    compareToolContracts({
+      sourceTools: canvasSource.tools,
+      skillTools: canvasSkill.tools,
+      label: 'Canvas',
+    }),
+  ].filter(Boolean);
+
+  if (failures.length > 0) {
+    fail(failures.join('\n\n'));
+    return;
+  }
+
+  process.stdout.write('Sync check passed: MCP and Canvas skill tool lists match their implementation sources.\n');
+}
+
+const isMain = process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+if (isMain) {
+  try {
+    run();
+  } catch (error) {
+    fail(error instanceof Error ? error.message : String(error));
   }
 }
-
-checkVersions();
-checkMarketplaceCopies();
-checkToolDocs();
-
-if (failures.length > 0) {
-  process.stderr.write(`Sync check failed:\n\n${failures.join('\n\n')}\n`);
-  process.exit(1);
-}
-
-process.stdout.write('Sync check passed: versions, plugin MCP range, and skill tool docs are aligned.\n');

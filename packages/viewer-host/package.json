@@ -1,0 +1,26 @@
+{
+  "name": "@manifold3d/viewer-host",
+  "version": "0.0.0-private",
+  "private": true,
+  "type": "module",
+  "files": [
+    "dist"
+  ],
+  "exports": {
+    "./viewer-host.js": {
+      "types": "./dist/viewer-host.d.ts",
+      "default": "./dist/viewer-host.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -b"
+  },
+  "dependencies": {
+    "@manifold3d/protocol": "0.0.0-private",
+    "ws": "^8.21.0"
+  },
+  "devDependencies": {
+    "@types/node": "^26.4.1",
+    "@types/ws": "^8.18.1"
+  }
+}

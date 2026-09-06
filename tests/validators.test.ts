@@ -1,7 +1,11 @@
 import { describe, expect, it } from 'vitest';
 
-import { runStaticStage, MAX_CODE_BYTES, detectResultAssignmentInJs } from '../src/server/validation/validators.js';
-import { ERROR_STATUS_TO_CODE } from '../src/server/validation/report.js';
+import {
+  runStaticStage,
+  MAX_CODE_BYTES,
+  detectResultAssignmentInJs,
+} from '../packages/modeling/src/validation/validators.js';
+import { ERROR_STATUS_TO_CODE } from '../packages/modeling/src/validation/report.js';
 
 describe('runStaticStage — forbidden globals', () => {
   it.each([
@@ -9,15 +13,32 @@ describe('runStaticStage — forbidden globals', () => {
     ['require', 'const x = require("fs"); result = Manifold.cube();'],
     ['eval', 'eval("1+1"); result = Manifold.cube();'],
     ['Function', 'const f = new Function("return 1"); result = Manifold.cube();'],
+    ['AsyncFunction', 'declare const AsyncFunction: unknown; void AsyncFunction; result = Manifold.cube();'],
     ['globalThis', 'globalThis.x = 1; result = Manifold.cube();'],
+    ['global', 'declare const global: unknown; void global; result = Manifold.cube();'],
+    ['module', 'declare const module: unknown; void module; result = Manifold.cube();'],
     ['child_process', 'const cp = child_process; result = Manifold.cube();'],
     ['fs', 'const f = fs; result = Manifold.cube();'],
     ['__dirname', 'const d = __dirname; result = Manifold.cube();'],
     ['__filename', 'const f = __filename; result = Manifold.cube();'],
+    ['SharedArrayBuffer', 'const memory = new SharedArrayBuffer(8); result = Manifold.cube(memory.byteLength);'],
   ])('flags %s as FORBIDDEN_GLOBAL', (_name, code) => {
     const r = runStaticStage(code);
     expect(r.ok).toBe(false);
     expect(r.errors.some(e => e.code === 'FORBIDDEN_GLOBAL')).toBe(true);
+  });
+
+  it.each([
+    ['dynamic import', `void import('node:fs'); result = Manifold.cube();`],
+    ['import.meta', `const url = import.meta.url; result = Manifold.cube(url.length);`],
+    ['direct constructor access', `const ctor = ({}).constructor; result = Manifold.cube();`],
+    ['computed constructor access', `const ctor = ({})['constructor']; result = Manifold.cube();`],
+    ['reflective constructor access', `const ctor = Reflect.get({}, 'constructor'); result = Manifold.cube();`],
+    ['Reflect.construct', `Reflect.construct(Object, []); result = Manifold.cube();`],
+  ])('flags %s as forbidden dynamic code', (_name, code) => {
+    const r = runStaticStage(code);
+    expect(r.ok).toBe(false);
+    expect(r.errors.some(error => error.code === 'FORBIDDEN_GLOBAL' && error.category === 'sandbox')).toBe(true);
   });
 });
 

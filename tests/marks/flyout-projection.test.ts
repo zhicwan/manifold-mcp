@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import * as THREE from 'three';
 
-import { AnnotationStore } from '../../src/viewer/src/marks/annotation-store.js';
-import { updatePositions } from '../../src/viewer/src/marks/flyout/flyout-projection.js';
+import { AnnotationStore } from '../../packages/viewer/src/marks/annotation-store.js';
+import { updatePositions } from '../../packages/viewer/src/marks/flyout/flyout-projection.js';
 
 interface FakeStyle {
   display: string;
@@ -26,7 +26,7 @@ function makeCamera(): THREE.PerspectiveCamera {
 describe('updatePositions', () => {
   it('places an anchor at the origin in the centre of the screen', () => {
     const store = new AnnotationStore();
-    const ann = store.add({
+    const ann = store.addComment({
       kind: 'point',
       worldCoord: [0, 0, 0],
       anchorWorld: [0, 0, 0],
@@ -47,7 +47,7 @@ describe('updatePositions', () => {
     const store = new AnnotationStore();
     // Behind the camera (camera at z=5 looks down -z, so positive z way
     // beyond the camera lies behind).
-    const ann = store.add({
+    const ann = store.addComment({
       kind: 'point',
       worldCoord: [0, 0, 50],
       anchorWorld: [0, 0, 50],

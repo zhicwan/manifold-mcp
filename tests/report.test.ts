@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest';
 
-import { addError, addHint, addWarning, emptyReport, reportToYaml } from '../src/server/validation/report.js';
+import {
+  addError,
+  addHint,
+  addWarning,
+  emptyReport,
+  reportToYaml,
+} from '../packages/modeling/src/validation/report.js';
 
 describe('reportToYaml', () => {
   it('serializes an OK report', () => {

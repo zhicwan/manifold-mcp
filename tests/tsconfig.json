@@ -5,5 +5,11 @@
     "noEmit": true,
     "types": ["vitest/globals", "node"]
   },
-  "include": ["**/*.ts", "../src/server/**/*.ts"]
+  "include": [
+    "**/*.ts",
+    "../packages/modeling/src/**/*.ts",
+    "../packages/protocol/src/**/*.ts",
+    "../packages/viewer-host/src/**/*.ts",
+    "../apps/manifold3d-mcp/src/**/*.ts"
+  ]
 }

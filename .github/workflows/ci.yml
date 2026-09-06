@@ -17,8 +17,14 @@ jobs:
           node-version: '24'
           cache: npm
       - run: npm ci
+      - run: npm run build:plugins -- --check
+      - run: git diff --exit-code
+      - run: npm run format:check
       - run: npm run lint
       - run: npm run typecheck
       - run: npm run check:sync
-      - run: npm run build
-      - run: npm test
+      - run: npm run test:unit:built
+      - run: npm run test:extension
+      - run: npm run test:smoke:built
+      - run: npm run verify --workspace @manifold3d/copilot-extension
+      - run: npm run verify:viewer-flat

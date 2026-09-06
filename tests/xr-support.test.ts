@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { isImmersiveVrSupported, watchImmersiveVrSupport, xrErrorMessage } from '../src/viewer/src/xr/support.js';
+import { isImmersiveVrSupported, watchImmersiveVrSupport, xrErrorMessage } from '../packages/viewer/src/xr/support.js';
 
 describe('WebXR support detection', () => {
   it('returns false when navigator has no XR system', async () => {

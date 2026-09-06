@@ -8,7 +8,7 @@ import {
   computeXrViewingDistance,
   easeOutCubic,
   interpolateTransform,
-} from '../src/viewer/src/xr/model-placement.js';
+} from '../packages/viewer/src/xr/model-placement.js';
 
 const EPSILON = 1e-6;
 

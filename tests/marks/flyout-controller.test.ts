@@ -1,10 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { AnnotationStore } from '../../src/viewer/src/marks/annotation-store.js';
+import { AnnotationStore } from '../../packages/viewer/src/marks/annotation-store.js';
 import {
   FlyoutController,
   type FlyoutControllerViewBridge,
-} from '../../src/viewer/src/marks/flyout/flyout-controller.js';
+} from '../../packages/viewer/src/marks/flyout/flyout-controller.js';
 
 function makeBridge(): {
   bridge: FlyoutControllerViewBridge;
@@ -24,7 +24,7 @@ function makeBridge(): {
 }
 
 function seed(store: AnnotationStore, note = ''): string {
-  const ann = store.add({
+  const ann = store.addComment({
     kind: 'point',
     worldCoord: [0, 0, 0],
     anchorWorld: [0, 0, 0],
@@ -72,6 +72,20 @@ describe('FlyoutController', () => {
     expect(controller.getExpandedId()).toBeNull();
   });
 
+  it('notifies the host bridge immediately after a changed draft is saved', () => {
+    const onCommit = vi.fn();
+    const notifyingController = new FlyoutController(store, bridge.bridge, onCommit);
+    const id = seed(store);
+    notifyingController.open(id);
+    notifyingController.setDraft(id, 'send this to the host');
+    notifyingController.commit(id);
+
+    expect(onCommit).toHaveBeenCalledOnce();
+    notifyingController.open(id);
+    notifyingController.commit(id);
+    expect(onCommit).toHaveBeenCalledOnce();
+  });
+
   it('commit() with an empty draft on a never-saved annotation removes it', () => {
     const id = seed(store);
     controller.open(id);
@@ -82,17 +96,13 @@ describe('FlyoutController', () => {
     expect(controller.getExpandedId()).toBeNull();
   });
 
-  it('commit() with empty draft on a previously-saved annotation keeps it', () => {
+  it('commit() with an empty draft removes an uncommitted annotation', () => {
     const id = seed(store, 'existing');
     controller.open(id);
     controller.setDraft(id, '');
     controller.commit(id);
 
-    // Empty trimmed draft on an annotation with a non-empty saved note
-    // is treated as a no-op rather than deletion. The current behaviour
-    // is "leave saved note alone" because the empty-then-deletion rule
-    // only applies when the annotation was never saved.
-    expect(store.get(id)).toBeDefined();
+    expect(store.get(id)).toBeUndefined();
     expect(controller.getExpandedId()).toBeNull();
   });
 
@@ -154,5 +164,52 @@ describe('FlyoutController', () => {
     expect(controller.getExpandedId()).toBeNull();
     expect(controller.getDraft(a)).toBeUndefined();
     expect(controller.getDraft(b)).toBe('orphan');
+  });
+
+  it('does not open or edit committed comments', () => {
+    const id = seed(store, 'frozen');
+    store.freezeBatch(store.getDraftBatch().batchId);
+
+    controller.open(id);
+    controller.setDraft(id, 'changed');
+    controller.commit(id);
+    controller.cancel(id);
+
+    expect(controller.getExpandedId()).toBeNull();
+    expect(controller.getDraft(id)).toBeUndefined();
+    expect(store.get(id)?.note).toBe('frozen');
+    expect(bridge.focus).not.toHaveBeenCalled();
+  });
+
+  it('drops an open draft when the comment batch becomes committed', () => {
+    const id = seed(store, 'ready');
+    controller.open(id);
+    controller.setDraft(id, 'in flight');
+
+    store.freezeBatch(store.getDraftBatch().batchId);
+    controller.syncAlive(new Set());
+
+    expect(controller.getExpandedId()).toBeNull();
+    expect(controller.getDraft(id)).toBeUndefined();
+    expect(store.get(id)?.note).toBe('ready');
+  });
+
+  it('does not open or edit selection annotations', () => {
+    const selection = store.addSelection({
+      kind: 'point',
+      worldCoord: [0, 0, 0],
+      anchorWorld: [0, 0, 0],
+      triIds: [],
+    });
+
+    controller.open(selection.id);
+    controller.setDraft(selection.id, 'changed');
+    controller.commit(selection.id);
+    controller.cancel(selection.id);
+
+    expect(controller.getExpandedId()).toBeNull();
+    expect(controller.getDraft(selection.id)).toBeUndefined();
+    expect(store.get(selection.id)).toMatchObject({ state: 'pending', note: '' });
+    expect(bridge.focus).not.toHaveBeenCalled();
   });
 });
